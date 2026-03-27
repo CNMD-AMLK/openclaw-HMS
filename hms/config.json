@@ -1,0 +1,60 @@
+{
+  "importance_threshold": 6,
+  "retrieval_top_k": 8,
+  "forget_base_threshold": 0.15,
+  "emotion_decay_slowdown_factor": 2.0,
+  "reinforcement_confidence_delta": 0.05,
+  "abstraction_min_cluster_size": 3,
+  "similarity_merge_threshold": 0.92,
+  "consolidation_cron": "0 3 * * *",
+  "forget_cron": "0 4 * * 0",
+  "lancedb_collection": "default",
+  "graph_recall_depth": 2,
+  "working_memory_recent_turns": 15,
+  "compress_every_n_turns": 8,
+
+  "_comment": "=== v2 LLM 配置 ===",
+
+  "llm_model": "__current__",
+  "llm_timeout_seconds": 30,
+  "llm_max_retries": 2,
+
+  "llm_perception_mode": "lite",
+  "llm_perception_max_tokens": 800,
+
+  "llm_deep_analysis_batch_size": 5,
+  "llm_deep_analysis_max_tokens": 1500,
+
+  "llm_consolidation_max_turns": 20,
+  "llm_consolidation_max_tokens": 2000,
+
+  "llm_fingerprint_max_tokens": 1500,
+
+  "llm_budget_tokens_per_day": 50000,
+
+  "compression_window_turns": 10,
+  "compression_max_summary_tokens": 500,
+
+  "timeline_update_interval_hours": 24,
+  "timeline_max_topics": 20,
+  "timeline_max_entries_per_topic": 10,
+
+  "fingerprint_update_interval_hours": 12,
+  "fingerprint_max_tokens": 2000,
+
+  "context_budget": {
+    "system_prompt": 2000,
+    "cognitive_fingerprint_ratio": 0.05,
+    "topic_timelines_ratio": 0.08,
+    "compressed_summaries_ratio": 0.12,
+    "injected_memories_ratio": 0.10,
+    "recent_turns_ratio": 0.30,
+    "response_reserve_ratio": 0.25,
+    "buffer_ratio": 0.10
+  },
+
+  "agent_roles": {
+    "chat": "助手",
+    "worker": "工作分身"
+  }
+}
