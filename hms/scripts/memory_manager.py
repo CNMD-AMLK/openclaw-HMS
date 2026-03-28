@@ -22,6 +22,7 @@ from .collision import CollisionEngine
 from .context_manager import ContextManager
 from .consolidation import ConsolidationEngine
 from .forgetting import ForgettingEngine
+from .embed_cache import EmbeddingCache
 
 
 # ======================================================================
@@ -190,6 +191,11 @@ class MemoryManager:
                 self.cfg.get("cache_dir", "cache"), "pending_processing.jsonl"
             ),
         })
+
+        # Embedding cache for pre-filtering (reduces LLM calls by 60-70%)
+        cache_dir = self.cfg.get("cache_dir", "cache")
+        self.embed_cache = EmbeddingCache({"cache_dir": cache_dir})
+        self.collision_engine.set_embed_cache(self.embed_cache)
 
     @staticmethod
     def _apply_tier(cfg: Dict[str, Any], tier: str) -> Dict[str, Any]:

@@ -1,7 +1,7 @@
 """
 HMS v2 — Collision Engine.
 
-LLM-driven semantic collision detection.
+LLM-driven semantic collision detection with embedding pre-filtering.
 Replaces v1's keyword-overlap approach with deep semantic analysis.
 """
 
@@ -11,17 +11,30 @@ import json
 from typing import Any, Callable, Dict, List, Optional
 
 from .llm_analyzer import LLMAnalyzer
+from .embed_cache import EmbeddingCache, prefilter_for_collision
 
 
 class CollisionEngine:
     """
     Detects contradictions, reinforcements, associations, and inferences
-    between new perceptions and existing memories using LLM analysis.
+    between new perceptions and existing memories.
+
+    Pipeline:
+      1. Embedding pre-filter (fast, local) — narrow candidates
+      2. LLM collision (slow, semantic) — deep analysis on filtered set
+      3. Heuristic fallback — when LLM unavailable
     """
 
     def __init__(self, config: Optional[Dict[str, Any]] = None) -> None:
         self.cfg = config or {}
         self.llm = LLMAnalyzer(self.cfg)
+        self.embed_cache: Optional[EmbeddingCache] = None
+        self._embed_threshold = self.cfg.get("embed_similarity_threshold", 0.3)
+        self._embed_max_candidates = self.cfg.get("embed_max_candidates", 10)
+
+    def set_embed_cache(self, cache: EmbeddingCache) -> None:
+        """Inject an embedding cache for pre-filtering."""
+        self.embed_cache = cache
 
     def collide(
         self,
@@ -31,16 +44,46 @@ class CollisionEngine:
         """
         Run full collision pipeline.
 
-        Tries LLM first, falls back to heuristic if unavailable.
+        1. Embedding pre-filter (if available)
+        2. LLM collision on filtered set
+        3. Heuristic fallback
         """
-        # Try LLM collision
-        llm_result = self.llm.collide(new_perception, retrieved_memories)
+        candidates = retrieved_memories
+
+        # Step 1: Embedding pre-filter
+        if self.embed_cache and retrieved_memories:
+            new_text = new_perception.get("text_for_store", "")
+            if new_text:
+                candidates = prefilter_for_collision(
+                    new_text=new_text,
+                    existing_memories=retrieved_memories,
+                    cache=self.embed_cache,
+                    similarity_threshold=self._embed_threshold,
+                    max_candidates=self._embed_max_candidates,
+                )
+
+        if not candidates:
+            return {
+                "contradictions": [],
+                "reinforcements": [],
+                "associations": [],
+                "new_insights": [],
+                "method": "prefilter_empty",
+            }
+
+        # Step 2: Try LLM collision
+        llm_result = self.llm.collide(new_perception, candidates)
         if llm_result:
             llm_result["method"] = "llm"
+            llm_result["prefilter_count"] = len(retrieved_memories)
+            llm_result["candidates_count"] = len(candidates)
             return llm_result
 
-        # Fallback: simple heuristic collision
-        return self._heuristic_collision(new_perception, retrieved_memories)
+        # Step 3: Fallback: simple heuristic collision
+        result = self._heuristic_collision(new_perception, candidates)
+        result["prefilter_count"] = len(retrieved_memories)
+        result["candidates_count"] = len(candidates)
+        return result
 
     def _heuristic_collision(
         self,
@@ -167,6 +210,8 @@ class CollisionEngine:
 
 def _self_test():
     """Run: python -m hms.scripts.collision"""
+    import tempfile
+
     engine = CollisionEngine()
 
     perception = {
@@ -186,7 +231,15 @@ def _self_test():
     assert "reinforcements" in result
     print(f"[collision] contradictions={len(result['contradictions'])} method={result.get('method')}")
 
-    print("✓ All self-tests passed.")
+    # Test with embedding pre-filter
+    with tempfile.TemporaryDirectory() as tmpdir:
+        cache = EmbeddingCache({"cache_dir": tmpdir})
+        engine.set_embed_cache(cache)
+
+        result2 = engine.collide(perception, memories)
+        print(f"[collision+embed] method={result2.get('method')} prefilter={result2.get('prefilter_count')}->candidates={result2.get('candidates_count')}")
+
+    print("All self-tests passed.")
 
 
 if __name__ == "__main__":

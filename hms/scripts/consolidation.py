@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Optional
 
 from .llm_analyzer import LLMAnalyzer
+from .embed_cache import EmbeddingCache
 
 
 class ConsolidationEngine:
@@ -28,6 +29,7 @@ class ConsolidationEngine:
     def __init__(self, config: Optional[Dict[str, Any]] = None) -> None:
         self.cfg = config or {}
         self.llm = LLMAnalyzer(self.cfg)
+        self.embed_cache: Optional[EmbeddingCache] = None
 
     # ==================================================================
     # 1. Memory Replay
@@ -261,18 +263,59 @@ class ConsolidationEngine:
     # 5. Relation Discovery
     # ==================================================================
 
+    def set_embed_cache(self, cache: EmbeddingCache) -> None:
+        """Inject an embedding cache for clustering."""
+        self.embed_cache = cache
+
     def discover_relations(
         self,
         memories: List[Dict[str, Any]],
     ) -> List[Dict[str, Any]]:
         """
-        Discover relations between memories via shared entities/topics.
+        Discover relations between memories.
+
+        Uses embedding clustering when available, falls back to
+        shared entity/topic pairwise comparison.
         """
+        if self.embed_cache and memories:
+            return self._embedding_discover_relations(memories)
+        return self._heuristic_discover_relations(memories)
+
+    def _embedding_discover_relations(
+        self,
+        memories: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        """Discover relations via embedding clustering."""
+        relations = []
+        clusters = self.embed_cache.cluster_by_similarity(
+            memories, threshold=0.5
+        )
+        for cluster in clusters:
+            if len(cluster) < 2:
+                continue
+            # All items in a cluster are related
+            for i in range(len(cluster)):
+                for j in range(i + 1, len(cluster)):
+                    a, b = cluster[i], cluster[j]
+                    relations.append({
+                        "source": a.get("id", ""),
+                        "target": b.get("id", ""),
+                        "relation_type": "semantic_cluster",
+                        "confidence": 0.7,
+                        "shared": [],
+                    })
+        return relations[:100]  # cap
+
+    def _heuristic_discover_relations(
+        self,
+        memories: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        """Discover relations via shared entities/topics (fallback)."""
         relations = []
         n = len(memories)
 
         for i in range(n):
-            for j in range(i + 1, min(n, i + 20)):  # limit pairwise comparisons
+            for j in range(i + 1, min(n, i + 20)):
                 a, b = memories[i], memories[j]
                 meta_a = a.get("metadata") or {}
                 meta_b = b.get("metadata") or {}
