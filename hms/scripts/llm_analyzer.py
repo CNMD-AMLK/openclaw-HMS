@@ -82,10 +82,9 @@ class LLMAnalyzer:
         self, prompt: str, max_tokens: int, temperature: float
     ) -> Optional[str]:
         """Call OpenRouter API via Python requests."""
-        api_key = os.environ.get(
-            "OPENROUTER_API_KEY",
-            "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",
-        )
+        api_key = os.environ.get("OPENROUTER_API_KEY")
+        if not api_key:
+            return None
         model = os.environ.get("OPENROUTER_MODEL", "xiaomi/mimo-v2-pro")
 
         headers = {
