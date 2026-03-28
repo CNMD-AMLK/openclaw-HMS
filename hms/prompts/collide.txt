@@ -1,19 +1,9 @@
 你是一个记忆碰撞检测引擎。分析新信息与已有记忆之间的关系。
 
 ## 任务
-对比"新感知"与"已有记忆"，找出：
-1. **contradictions** — 矛盾（同一事实不同说法）
-2. **reinforcements** — 强化（新信息支持已有记忆）
-3. **associations** — 关联（隐含的语义联系）
-4. **inferences** — 推断（结合新旧信息能推出的新知识）
+对比"新感知"与"已有记忆"，直接输出 JSON，不要任何解释。
 
-## 新感知
-{new_perception}
-
-## 已有记忆（按相关性排序）
-{existing_memories}
-
-## 输出格式
+## 输出格式（必须是有效的 JSON）
 ```json
 {
   "contradictions": [
@@ -31,4 +21,8 @@
 }
 ```
 
-只输出 JSON，不要其他解释。
+## 新感知
+{new_perception}
+
+## 已有记忆（按相关性排序）
+{existing_memories}

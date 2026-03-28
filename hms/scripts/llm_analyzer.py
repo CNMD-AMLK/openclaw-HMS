@@ -35,6 +35,7 @@ class LLMAnalyzer:
     """
 
     _PROMPTS_DIR = Path(__file__).parent.parent / "prompts"
+    _env_loaded = False
 
     def __init__(self, config: Optional[Dict[str, Any]] = None) -> None:
         self.cfg = config or {}
@@ -46,11 +47,28 @@ class LLMAnalyzer:
         self._budget = self.cfg.get("llm_budget_tokens_per_day", 50000)
         self._budget_reset = time.time()
 
+        # Load .env file if not already loaded
+        if not LLMAnalyzer._env_loaded:
+            LLMAnalyzer._load_env()
+
         # Circuit breaker state
         self._consecutive_failures = 0
         self._circuit_open_until = 0.0
         self._circuit_failure_threshold = 5
         self._circuit_cooldown_seconds = 300  # 5 minutes
+
+    @classmethod
+    def _load_env(cls) -> None:
+        """Load .env file if exists."""
+        env_path = Path(__file__).parent.parent.parent / ".env"
+        if env_path.exists():
+            with open(env_path) as f:
+                for line in f:
+                    line = line.strip()
+                    if line and not line.startswith("#") and "=" in line:
+                        key, val = line.split("=", 1)
+                        os.environ.setdefault(key, val)
+            cls._env_loaded = True
 
     # ==================================================================
     # Core LLM call
@@ -179,7 +197,15 @@ class LLMAnalyzer:
         )
         resp.raise_for_status()
         data = resp.json()
-        return data["choices"][0]["message"]["content"].strip()
+        message = data["choices"][0]["message"]
+        content = message.get("content")
+        if content:
+            return content.strip()
+        # MiMo may return reasoning instead of content
+        reasoning = message.get("reasoning")
+        if reasoning:
+            return reasoning.strip()
+        return None
 
     # ==================================================================
     # Prompt loading
