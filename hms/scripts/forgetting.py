@@ -13,6 +13,8 @@ import os
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
+from .file_utils import atomic_write_json, safe_read_json, file_lock
+
 
 class ForgettingEngine:
     """
@@ -33,19 +35,11 @@ class ForgettingEngine:
     # ==================================================================
 
     def load_decay_state(self) -> None:
-        if os.path.isfile(self._cache_path):
-            try:
-                with open(self._cache_path, "r", encoding="utf-8") as f:
-                    self._states = json.load(f)
-            except (json.JSONDecodeError, IOError):
-                self._states = {}
-        else:
-            self._states = {}
+        self._states = safe_read_json(self._cache_path, {})
 
     def save_decay_state(self) -> None:
-        os.makedirs(os.path.dirname(self._cache_path) or ".", exist_ok=True)
-        with open(self._cache_path, "w", encoding="utf-8") as f:
-            json.dump(self._states, f, ensure_ascii=False, indent=2)
+        with file_lock(self._cache_path):
+            atomic_write_json(self._cache_path, self._states)
 
     # ==================================================================
     # Access / reinforcement hooks

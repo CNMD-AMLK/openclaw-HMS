@@ -9,13 +9,21 @@ from __future__ import annotations
 
 import json
 import os
-import subprocess
-import tempfile
+import re
 import time
 
 import requests
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+
+def estimate_tokens(text: str) -> int:
+    """Rough token estimation: Chinese ~1.5 char/token, English ~4 char/token."""
+    if not text:
+        return 0
+    cn = sum(1 for c in text if "\u4e00" <= c <= "\u9fff")
+    en = len(text) - cn
+    return int(cn / 1.5 + en / 4)
 
 
 class LLMAnalyzer:
@@ -32,11 +40,17 @@ class LLMAnalyzer:
         self.cfg = config or {}
         self._model = self.cfg.get("llm_model", "__current__")
         self._timeout = self.cfg.get("llm_timeout_seconds", 30)
-        self._max_retries = self.cfg.get("llm_max_retries", 2)
+        self._max_retries = self.cfg.get("llm_max_retries", 3)
         self._call_count = 0
         self._token_count = 0
         self._budget = self.cfg.get("llm_budget_tokens_per_day", 50000)
         self._budget_reset = time.time()
+
+        # Circuit breaker state
+        self._consecutive_failures = 0
+        self._circuit_open_until = 0.0
+        self._circuit_failure_threshold = 5
+        self._circuit_cooldown_seconds = 300  # 5 minutes
 
     # ==================================================================
     # Core LLM call
@@ -49,12 +63,8 @@ class LLMAnalyzer:
         temperature: float = 0.1,
     ) -> Optional[str]:
         """
-        Call the current OpenClaw model. Tries multiple approaches:
-        1. OpenClaw CLI (openclaw chat)
-        2. Python subprocess with model API
-        3. Fallback: return None (caller must handle)
-
-        All calls are budget-controlled.
+        Call the current OpenClaw model with exponential backoff,
+        error classification, and circuit breaker.
         """
         # Budget check
         if time.time() - self._budget_reset > 86400:
@@ -65,18 +75,81 @@ class LLMAnalyzer:
         if self._token_count >= self._budget:
             return None  # budget exhausted
 
+        # Circuit breaker check
+        now = time.time()
+        if now < self._circuit_open_until:
+            return None  # circuit is open, skip call
+
         for attempt in range(self._max_retries):
             try:
                 result = self._try_openclaw_cli(prompt, max_tokens, temperature)
                 if result:
                     self._call_count += 1
-                    self._token_count += len(result) // 2  # rough estimate
+                    self._token_count += estimate_tokens(result)
+                    # Reset circuit breaker on success
+                    self._consecutive_failures = 0
                     return result
+                # No API key or empty result — not a failure, just unavailable
+                return None
+            except requests.exceptions.HTTPError as exc:
+                status = exc.response.status_code if exc.response is not None else 0
+
+                if status == 429:
+                    # Rate limited: read Retry-After header
+                    retry_after = self._parse_retry_after(exc.response)
+                    wait = min(retry_after, 60)
+                    time.sleep(wait)
+                    self._consecutive_failures += 1
+                elif status >= 500:
+                    # Server error: exponential backoff
+                    wait = min(2 ** attempt, 30)
+                    time.sleep(wait)
+                    self._consecutive_failures += 1
+                elif status == 401 or status == 403:
+                    # Auth error: no point retrying
+                    self._trip_circuit()
+                    return None
+                else:
+                    # Other client errors
+                    self._consecutive_failures += 1
+                    if attempt < self._max_retries - 1:
+                        time.sleep(min(2 ** attempt, 30))
+
+            except (requests.exceptions.ConnectionError, requests.exceptions.Timeout):
+                # Network issues: exponential backoff
+                wait = min(2 ** attempt, 30)
+                time.sleep(wait)
+                self._consecutive_failures += 1
+
             except Exception:
+                self._consecutive_failures += 1
                 if attempt < self._max_retries - 1:
-                    time.sleep(1)
-                    continue
+                    time.sleep(min(2 ** attempt, 30))
+
+            # Check if circuit should trip
+            if self._consecutive_failures >= self._circuit_failure_threshold:
+                self._trip_circuit()
+                return None
+
         return None
+
+    def _trip_circuit(self) -> None:
+        """Open the circuit breaker — pause all LLM calls."""
+        self._circuit_open_until = time.time() + self._circuit_cooldown_seconds
+
+    @staticmethod
+    def _parse_retry_after(response: Optional[requests.Response]) -> float:
+        """Parse Retry-After header from a 429 response."""
+        if response is None:
+            return 5.0
+        raw = response.headers.get("Retry-After", "")
+        if not raw:
+            return 5.0
+        try:
+            return float(raw)
+        except ValueError:
+            # Could be HTTP-date format, default to 5s
+            return 5.0
 
     def _try_openclaw_cli(
         self, prompt: str, max_tokens: int, temperature: float
@@ -342,13 +415,18 @@ class LLMAnalyzer:
 
     def get_stats(self) -> Dict[str, Any]:
         """Return usage statistics."""
+        now = time.time()
+        circuit_open = now < self._circuit_open_until
         return {
             "call_count": self._call_count,
             "token_count_estimate": self._token_count,
             "budget_remaining": max(0, self._budget - self._token_count),
             "budget_reset_in_hours": max(
-                0, (86400 - (time.time() - self._budget_reset)) / 3600
+                0, (86400 - (now - self._budget_reset)) / 3600
             ),
+            "consecutive_failures": self._consecutive_failures,
+            "circuit_open": circuit_open,
+            "circuit_remaining_seconds": max(0, self._circuit_open_until - now) if circuit_open else 0,
         }
 
 
@@ -378,7 +456,18 @@ def _self_test():
     assert parsed == {"key": "value"}
     print(f"[json parse] OK")
 
-    print("✓ All self-tests passed.")
+    # Test token estimation
+    assert estimate_tokens("hello world") > 0
+    assert estimate_tokens("你好世界测试") > estimate_tokens("hello test")
+    print(f"[token estimate] OK")
+
+    # Test circuit breaker state
+    stats = analyzer.get_stats()
+    assert stats["consecutive_failures"] == 0
+    assert stats["circuit_open"] is False
+    print(f"[circuit breaker] OK")
+
+    print("All self-tests passed.")
 
 
 if __name__ == "__main__":

@@ -68,12 +68,19 @@ class MemoryAdapter:
                 "top_k": top_k,
                 "category": category,
             })
-            return result if isinstance(result, list) else []
+            memories = result if isinstance(result, list) else []
+            return self._filter_forgotten(memories)
         except Exception:
             fn = self._tools.get("memory_recall")
             if fn:
-                return fn(query=query, top_k=top_k, category=category) or []
+                memories = fn(query=query, top_k=top_k, category=category) or []
+                return self._filter_forgotten(memories)
             return []
+
+    @staticmethod
+    def _filter_forgotten(memories: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Filter out soft-deleted (importance=0) memories."""
+        return [m for m in memories if m.get("importance", 1) > 0]
 
     def update(self, memory_id: str, **kwargs: Any) -> Any:
         fn = self._tools.get("memory_update")
@@ -83,6 +90,20 @@ class MemoryAdapter:
         return {"status": "stubbed"}
 
     def forget(self, memory_id: str) -> Any:
+        """Delete a memory. Tries dedicated delete API first, falls back to soft-delete."""
+        # Try dedicated delete endpoint
+        try:
+            result = self._call_gateway_api("/api/tools/memory-forget", {
+                "memory_id": memory_id,
+            })
+            return result
+        except Exception:
+            pass
+        # Try injected tool
+        fn = self._tools.get("memory_forget")
+        if fn:
+            return fn(memory_id=memory_id)
+        # Last resort: soft-delete via store with importance=0
         try:
             return self._call_gateway_api("/api/tools/memory-store", {
                 "text": "",
@@ -91,10 +112,7 @@ class MemoryAdapter:
                 "metadata": json.dumps({"action": "forget", "memory_id": memory_id}),
             })
         except Exception:
-            fn = self._tools.get("memory_forget")
-            if fn:
-                return fn(memory_id=memory_id)
-            return {"status": "stubbed"}
+            return {"status": "stubbed", "memory_id": memory_id}
 
     def graph_record(self, source: str, target: str, relation: str, context: str = "") -> Any:
         try:
@@ -401,7 +419,7 @@ class MemoryManager:
 
         # 4. Memory replay
         try:
-            all_memories = self.adapter.recall(query="", top_k=100) or []
+            all_memories = self.adapter.recall(query="记忆回顾", top_k=100) or []
         except Exception:
             all_memories = []
 
@@ -446,7 +464,7 @@ class MemoryManager:
         Evaluate all memories and forget weak ones.
         """
         try:
-            all_memories = self.adapter.recall(query="", top_k=500) or []
+            all_memories = self.adapter.recall(query="所有记忆", top_k=500) or []
         except Exception:
             all_memories = []
 

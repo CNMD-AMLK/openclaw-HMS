@@ -13,14 +13,24 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Optional
+
+from .file_utils import (
+    atomic_write_json,
+    safe_read_json,
+    safe_append_jsonl,
+    safe_read_jsonl,
+    safe_clear_jsonl,
+    file_lock,
+)
 
 
 class ContextManager:
     """
     Orchestrates the HMS v2 cognitive layer:
-      - Async perception pipeline (pending → batch LLM analysis)
+      - Async perception pipeline (pending -> batch LLM analysis)
       - Three-layer context composition for infinite context
       - Dynamic token budget allocation
     """
@@ -44,34 +54,22 @@ class ContextManager:
         os.makedirs(self._cache_dir, exist_ok=True)
 
         # Load state
-        self._fingerprint = self._load_json(self._fingerprint_path, {})
-        self._timelines = self._load_json(self._timelines_path, {})
-        self._compression_history = self._load_json(self._compression_path, [])
+        self._fingerprint = safe_read_json(self._fingerprint_path, {})
+        self._timelines = safe_read_json(self._timelines_path, {})
+        self._compression_history = safe_read_json(self._compression_path, [])
 
     # ==================================================================
     # Persistence helpers
     # ==================================================================
 
-    @staticmethod
-    def _load_json(path: str, default: Any) -> Any:
-        if os.path.isfile(path):
-            try:
-                with open(path, "r", encoding="utf-8") as f:
-                    return json.load(f)
-            except (json.JSONDecodeError, IOError):
-                pass
-        return default
-
-    def _save_json(self, path: str, data: Any) -> None:
-        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
-
     def save_state(self) -> None:
-        """Persist all state to disk."""
-        self._save_json(self._fingerprint_path, self._fingerprint)
-        self._save_json(self._timelines_path, self._timelines)
-        self._save_json(self._compression_path, self._compression_history)
+        """Persist all state to disk atomically with locks."""
+        with file_lock(self._fingerprint_path):
+            atomic_write_json(self._fingerprint_path, self._fingerprint)
+        with file_lock(self._timelines_path):
+            atomic_write_json(self._timelines_path, self._timelines)
+        with file_lock(self._compression_path):
+            atomic_write_json(self._compression_path, self._compression_history)
 
     # ==================================================================
     # Pending queue
@@ -92,28 +90,15 @@ class ContextManager:
             "session_id": session_id,
             "timestamp": ts,
         }
-        line = json.dumps(entry, ensure_ascii=False)
-        with open(self._pending_path, "a", encoding="utf-8") as f:
-            f.write(line + "\n")
+        safe_append_jsonl(self._pending_path, entry)
 
     def read_pending(self) -> List[Dict[str, Any]]:
         """Read all pending entries without clearing."""
-        if not os.path.isfile(self._pending_path):
-            return []
-        entries = []
-        with open(self._pending_path, "r", encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if line:
-                    try:
-                        entries.append(json.loads(line))
-                    except json.JSONDecodeError:
-                        continue
-        return entries
+        return safe_read_jsonl(self._pending_path)
 
     def clear_pending(self) -> None:
         """Truncate the pending file."""
-        open(self._pending_path, "w").close()
+        safe_clear_jsonl(self._pending_path)
 
     def get_pending_count(self) -> int:
         if not os.path.isfile(self._pending_path):
@@ -273,19 +258,19 @@ class ContextManager:
     # ==================================================================
 
     def estimate_token_budget(
-        self, model_context_window: int = 32000
+        self, model_context_window: int = 256000
     ) -> Dict[str, int]:
         """Dynamic token budget allocation for v2 three-layer context."""
         budget_cfg = self.cfg.get("context_budget", {})
 
-        sys_prompt = budget_cfg.get("system_prompt", 2000)
-        fingerprint_ratio = budget_cfg.get("cognitive_fingerprint_ratio", 0.05)
-        timelines_ratio = budget_cfg.get("topic_timelines_ratio", 0.08)
-        compressed_ratio = budget_cfg.get("compressed_summaries_ratio", 0.12)
-        memories_ratio = budget_cfg.get("injected_memories_ratio", 0.10)
-        recent_ratio = budget_cfg.get("recent_turns_ratio", 0.30)
-        response_ratio = budget_cfg.get("response_reserve_ratio", 0.25)
-        buffer_ratio = budget_cfg.get("buffer_ratio", 0.10)
+        sys_prompt = budget_cfg.get("system_prompt", 4000)
+        fingerprint_ratio = budget_cfg.get("cognitive_fingerprint_ratio", 0.02)
+        timelines_ratio = budget_cfg.get("topic_timelines_ratio", 0.03)
+        compressed_ratio = budget_cfg.get("compressed_summaries_ratio", 0.05)
+        memories_ratio = budget_cfg.get("injected_memories_ratio", 0.15)
+        recent_ratio = budget_cfg.get("recent_turns_ratio", 0.35)
+        response_ratio = budget_cfg.get("response_reserve_ratio", 0.15)
+        buffer_ratio = budget_cfg.get("buffer_ratio", 0.05)
 
         fingerprint = int(model_context_window * fingerprint_ratio)
         timelines = int(model_context_window * timelines_ratio)
@@ -328,7 +313,7 @@ class ContextManager:
         system_prompt: str,
         injected_memories: List[Dict[str, Any]],
         recent_turns: List[Dict[str, str]],
-        model_context_window: int = 32000,
+        model_context_window: int = 256000,
     ) -> Dict[str, Any]:
         """
         Compose full context using three-layer infinite context architecture:
@@ -480,7 +465,7 @@ class ContextManager:
 
     @staticmethod
     def truncate_to_tokens(text: str, max_tokens: int) -> str:
-        """Truncate text to approximately max_tokens."""
+        """Truncate text to approximately max_tokens at safe breakpoints."""
         if not text:
             return ""
         est = ContextManager.estimate_tokens(text)
@@ -488,7 +473,13 @@ class ContextManager:
             return text
         ratio = max_tokens / max(est, 1)
         cut = int(len(text) * ratio)
-        return text[:cut] + "\n...(已截断)"
+        # Find safe breakpoint: search backwards for punctuation/space/newline
+        safe_breakpoints = set("。！？；\n.!?; ")
+        for i in range(cut, max(0, cut - 50), -1):
+            if i < len(text) and text[i] in safe_breakpoints:
+                cut = i + 1
+                break
+        return text[:cut] + "\n...(truncated)"
 
 
 # ======================================================================
@@ -537,7 +528,12 @@ def _self_test():
         assert "topic_timelines" in ctx
         print(f"[context] tokens_est={ctx['total_tokens_estimated']}")
 
-        print("✓ All self-tests passed.")
+        # Test safe truncation
+        truncated = ContextManager.truncate_to_tokens("这是一个很长的中文句子。它应该在标点处截断。", 5)
+        assert "truncated" in truncated or "截断" in truncated
+        print(f"[truncate] OK")
+
+        print("All self-tests passed.")
 
 
 if __name__ == "__main__":
