@@ -478,6 +478,11 @@ class MemoryManager:
                 )
                 report["relations_found"] = count
 
+        # 6. Decay state consistency check
+        if all_memories:
+            sync_report = self.forgetting.sync_consistency(all_memories)
+            report["decay_sync"] = sync_report
+
         return report
 
     # ==================================================================

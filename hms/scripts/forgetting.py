@@ -279,6 +279,44 @@ class ForgettingEngine:
                 return {}
         return {}
 
+    def sync_consistency(
+        self,
+        memories: List[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        """
+        Reconcile decay_state with actual memory store.
+        Returns a report of fixes applied.
+        """
+        report = {"synced": 0, "orphaned_removed": 0, "missing_added": 0}
+        memory_ids = set()
+
+        for mem in memories:
+            mid = mem.get("id", "")
+            if not mid:
+                continue
+            memory_ids.add(mid)
+            if mid not in self._states:
+                self._sync_from_memory(mem)
+                report["missing_added"] += 1
+            else:
+                # Update importance from memory store
+                mem_imp = float(mem.get("importance", 5))
+                state_imp = self._states[mid].get("importance", 5)
+                if mem_imp != state_imp:
+                    self._states[mid]["importance"] = mem_imp
+                    report["synced"] += 1
+
+        # Remove orphaned states (memory was deleted but decay state remains)
+        orphaned = [mid for mid in self._states if mid not in memory_ids]
+        for mid in orphaned:
+            del self._states[mid]
+            report["orphaned_removed"] += 1
+
+        if report["synced"] or report["orphaned_removed"] or report["missing_added"]:
+            self.save_decay_state()
+
+        return report
+
 
 # ======================================================================
 # Self-test

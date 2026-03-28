@@ -1,8 +1,8 @@
 """
 HMS v2 — End-to-End Test Suite.
 
-Validates the full pipeline: perception → collision → context → consolidation → forgetting.
-Tests both LLM and heuristic paths.
+Validates the full pipeline: perception -> collision -> context -> consolidation -> forgetting.
+Tests both LLM and heuristic paths. LLM calls are mocked when no API key is available.
 """
 
 from __future__ import annotations
@@ -12,9 +12,71 @@ import os
 import sys
 import tempfile
 from datetime import datetime, timezone
+from unittest.mock import patch, MagicMock
 
 # Ensure the package is importable
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
+
+
+# ======================================================================
+# Mock LLM responses
+# ======================================================================
+
+MOCK_PERCEIVE_RESPONSE = json.dumps({
+    "entities": [{"name": "Python", "type": "tool"}],
+    "emotion": {"valence": 0.5, "arousal": 0.3, "primary_emotion": "happy", "evidence": "用户说喜欢"},
+    "intent": {"primary": "陈述", "confidence": 0.9},
+    "importance": 7,
+    "importance_reason": "用户表达了偏好",
+    "category": "preference",
+    "topics": ["编程"],
+    "key_facts": ["用户喜欢Python"],
+    "should_remember": True
+})
+
+MOCK_COLLIDE_RESPONSE = json.dumps({
+    "contradictions": [],
+    "reinforcements": [{"existing_id": "m1", "confidence_delta": 0.05, "reason": "same tool"}],
+    "associations": [{"existing_id": "m1", "relation_type": "co_mentioned", "confidence": 0.8, "reason": "Python"}],
+    "inferences": []
+})
+
+MOCK_CONSOLIDATE_RESPONSE = json.dumps({
+    "summary": "用户讨论了Python编程",
+    "key_decisions": ["使用Python"],
+    "preferences_revealed": ["喜欢Python"],
+    "emotional_moments": [],
+    "entities_mentioned": ["Python"],
+    "topics": ["编程"],
+    "thinking_patterns": ["注重效率"],
+    "timeline_entry": {"date": "2024-01-01", "topic": "编程", "summary": "讨论Python", "importance": 7}
+})
+
+MOCK_FINGERPRINT_RESPONSE = json.dumps({
+    "thinking_patterns": ["注重效率", "喜欢简洁"],
+    "core_preferences": ["Python"],
+    "emotional_triggers": {"positive": ["成功"], "negative": ["bug"]},
+    "focus_areas": ["编程"],
+    "communication_style": "直接",
+    "values": ["效率"],
+    "recent_goals": ["学习新技术"],
+    "personality_notes": "务实",
+    "confidence": 0.8,
+    "version": 1
+})
+
+
+def mock_llm_call(prompt, max_tokens=1000, temperature=0.1):
+    """Return mock responses based on prompt content."""
+    if "感知" in prompt or "perceive" in prompt.lower() or "对话" in prompt:
+        return MOCK_PERCEIVE_RESPONSE
+    if "碰撞" in prompt or "collide" in prompt.lower() or "对比" in prompt:
+        return MOCK_COLLIDE_RESPONSE
+    if "压缩" in prompt or "consolidate" in prompt.lower() or "摘要" in prompt:
+        return MOCK_CONSOLIDATE_RESPONSE
+    if "指纹" in prompt or "fingerprint" in prompt.lower() or "画像" in prompt:
+        return MOCK_FINGERPRINT_RESPONSE
+    return MOCK_PERCEIVE_RESPONSE
 
 
 def run_tests():
@@ -28,14 +90,15 @@ def run_tests():
         try:
             fn()
             passed += 1
-            print(f"  ✓ {name}")
+            print(f"  OK {name}")
         except Exception as e:
             failed += 1
-            errors.append((name, str(e)))
-            print(f"  ✗ {name}: {e}")
+            err_str = repr(e) if str(e) else type(e).__name__
+            errors.append((name, err_str))
+            print(f"  FAIL {name}: {err_str}")
 
     print("=" * 60)
-    print("HMS v2 — End-to-End Test Suite")
+    print("HMS v2 -- End-to-End Test Suite")
     print("=" * 60)
     print()
 
@@ -52,6 +115,8 @@ def run_tests():
     test("Fallback perceive", _test_fallback_perceive)
     test("JSON parsing", _test_json_parse)
     test("Stats tracking", _test_stats)
+    test("Token estimation", _test_token_estimate)
+    test("Circuit breaker", _test_circuit_breaker)
     print()
 
     # --- Perception ---
@@ -66,6 +131,14 @@ def run_tests():
     test("Execute results", _test_collision_exec)
     print()
 
+    # --- Embedding Cache ---
+    print("[Embedding Cache]")
+    test("Embed single", _test_embed_single)
+    test("Similarity", _test_embed_similarity)
+    test("Find similar", _test_embed_find)
+    test("Prefilter", _test_embed_prefilter)
+    print()
+
     # --- Context Manager ---
     print("[Context Manager]")
     test("Pending queue", _test_pending_queue)
@@ -73,6 +146,7 @@ def run_tests():
     test("Timeline CRUD", _test_timeline_crud)
     test("Context composition", _test_context_compose)
     test("Token estimation", _test_token_est)
+    test("Budget minimum floor", _test_budget_floor)
     print()
 
     # --- Consolidation ---
@@ -87,6 +161,7 @@ def run_tests():
     test("Access tracking", _test_forget_access)
     test("Strength calculation", _test_forget_strength)
     test("Immortal guard", _test_immortal)
+    test("Consistency sync", _test_forget_sync)
     print()
 
     # --- Memory Manager ---
@@ -97,6 +172,14 @@ def run_tests():
     test("Process pending", _test_mm_process)
     test("Consolidate", _test_mm_consolidate)
     test("Forget", _test_mm_forget)
+    test("Tier support", _test_mm_tier)
+    print()
+
+    # --- LLM Mocked Integration ---
+    print("[LLM Mocked Integration]")
+    test("Mocked perceive", _test_mocked_perceive)
+    test("Mocked collision", _test_mocked_collision)
+    test("Mocked consolidation", _test_mocked_consolidation)
     print()
 
     # --- Summary ---
@@ -106,9 +189,9 @@ def run_tests():
     if failed:
         print(f", {failed} FAILED")
         for name, err in errors:
-            print(f"  ✗ {name}: {err}")
+            print(f"  FAIL {name}: {err}")
     else:
-        print(" — ALL PASSED ✓")
+        print(" -- ALL PASSED")
     print("=" * 60)
 
     return failed == 0
@@ -178,6 +261,24 @@ def _test_stats():
     a = LLMAnalyzer()
     s = a.get_stats()
     assert "call_count" in s
+    assert "circuit_open" in s
+
+
+def _test_token_estimate():
+    from hms.scripts.llm_analyzer import estimate_tokens
+    assert estimate_tokens("hello world") > 0
+    assert estimate_tokens("你好世界测试") > estimate_tokens("hello test")
+    assert estimate_tokens("") == 0
+
+
+def _test_circuit_breaker():
+    from hms.scripts.llm_analyzer import LLMAnalyzer
+    a = LLMAnalyzer()
+    assert a._consecutive_failures == 0
+    a._trip_circuit()
+    assert a._circuit_open_until > 0
+    s = a.get_stats()
+    assert s["circuit_open"] is True
 
 
 def _test_perception_lite():
@@ -214,6 +315,42 @@ def _test_collision_exec():
     assert r["graph_edges"] >= 0
 
 
+def _test_embed_single():
+    with tempfile.TemporaryDirectory() as d:
+        from hms.scripts.embed_cache import EmbeddingCache
+        cache = EmbeddingCache({"cache_dir": d})
+        vec = cache.embed("test text")
+        assert len(vec) == 256
+        stats = cache.get_stats()
+        assert stats["encoder_type"] in ("char_ngram", "sentence-transformers")
+
+
+def _test_embed_similarity():
+    with tempfile.TemporaryDirectory() as d:
+        from hms.scripts.embed_cache import EmbeddingCache
+        cache = EmbeddingCache({"cache_dir": d})
+        sim = cache.similarity("Python code", "Python programming")
+        assert 0.0 <= sim <= 1.0
+
+
+def _test_embed_find():
+    with tempfile.TemporaryDirectory() as d:
+        from hms.scripts.embed_cache import EmbeddingCache
+        cache = EmbeddingCache({"cache_dir": d})
+        candidates = [{"text": "Python语言", "id": "a"}, {"text": "天气好", "id": "b"}]
+        results = cache.find_similar("Python", candidates, top_k=2, threshold=0.05)
+        assert len(results) >= 1
+
+
+def _test_embed_prefilter():
+    from hms.scripts.embed_cache import EmbeddingCache, prefilter_for_collision
+    with tempfile.TemporaryDirectory() as d:
+        cache = EmbeddingCache({"cache_dir": d})
+        memories = [{"text": "Python编程", "id": "m1"}, {"text": "天气好", "id": "m2"}]
+        filtered = prefilter_for_collision("Python代码", memories, cache, similarity_threshold=0.1)
+        assert isinstance(filtered, list)
+
+
 def _test_pending_queue():
     with tempfile.TemporaryDirectory() as d:
         from hms.scripts.context_manager import ContextManager
@@ -234,7 +371,6 @@ def _test_fp_crud():
         cm.update_fingerprint({"thinking_patterns": ["analytical"], "core_preferences": ["Python"]})
         fp = cm.get_fingerprint()
         assert "analytical" in fp.get("thinking_patterns", [])
-        # Merge
         cm.update_fingerprint({"thinking_patterns": ["creative"]})
         fp2 = cm.get_fingerprint()
         assert "analytical" in fp2["thinking_patterns"]
@@ -271,6 +407,17 @@ def _test_token_est():
     assert ContextManager.estimate_tokens("hello world") > 0
     assert ContextManager.estimate_tokens("你好世界") > 0
     assert ContextManager.truncate_to_tokens("hello world", 1) != "hello world"
+
+
+def _test_budget_floor():
+    from hms.scripts.context_manager import ContextManager
+    with tempfile.TemporaryDirectory() as d:
+        cm = ContextManager({"pending_path": os.path.join(d, "p.jsonl")})
+        # Test with a very small window to trigger minimum floor
+        budget = cm.estimate_token_budget(model_context_window=5000)
+        assert budget["cognitive_fingerprint"] >= 300
+        assert budget["injected_memories"] >= 500
+        assert budget["recent_turns"] >= 1000
 
 
 def _test_replay_select():
@@ -337,10 +484,29 @@ def _test_immortal():
     assert not ForgettingEngine._is_immortal({"importance": 3, "metadata": {}})
 
 
+def _test_forget_sync():
+    import tempfile
+    path = tempfile.mktemp(suffix=".json")
+    try:
+        from hms.scripts.forgetting import ForgettingEngine
+        fe = ForgettingEngine({"decay_cache_path": path})
+        fe.update_on_access("m1")
+        fe.update_on_access("m2")
+        # Sync with memories where m2 was deleted
+        memories = [{"id": "m1", "importance": 7, "metadata": {}}, {"id": "m3", "importance": 5, "metadata": {}}]
+        report = fe.sync_consistency(memories)
+        assert report["orphaned_removed"] == 1  # m2 removed
+        assert report["missing_added"] == 1  # m3 added
+    finally:
+        if os.path.exists(path):
+            os.unlink(path)
+
+
 def _test_mm_init():
     from hms.scripts.memory_manager import MemoryManager
     mgr = MemoryManager({"cache_dir": tempfile.mkdtemp()})
     assert mgr.perception is not None
+    assert mgr.embed_cache is not None
 
 
 def _test_mm_received():
@@ -384,6 +550,64 @@ def _test_mm_forget():
         mgr = MemoryManager({"cache_dir": d})
         result = mgr.forget()
         assert "evaluated" in result
+
+
+def _test_mm_tier():
+    from hms.scripts.memory_manager import MemoryManager
+    import json
+    with open("hms/config.json") as f:
+        base_cfg = json.load(f)
+    for tier in ["32k", "128k", "256k", "1M"]:
+        cfg = MemoryManager._apply_tier(dict(base_cfg), tier)
+        assert cfg.get("model_context_window", 0) > 0
+
+
+def _test_mocked_perceive():
+    """Test perception with mocked LLM calls."""
+    from hms.scripts.llm_analyzer import LLMAnalyzer
+    a = LLMAnalyzer()
+    with patch.object(a, '_call_llm', side_effect=mock_llm_call):
+        result = a.perceive("我喜欢Python")
+        assert result is not None
+        assert result.get("should_remember") is True
+
+
+def _test_mocked_collision():
+    """Test collision with mocked LLM calls."""
+    from hms.scripts.llm_analyzer import LLMAnalyzer
+    a = LLMAnalyzer()
+    call_log = []
+
+    def mock_fn(prompt, max_tokens=1000, temperature=0.1):
+        call_log.append("called")
+        return MOCK_COLLIDE_RESPONSE
+
+    with patch.object(a, '_call_llm', side_effect=mock_fn):
+        result = a.collide(
+            {'text_for_store': 'Python不错'},
+            [{'id': 'm1', 'text': '用户用Python'}]
+        )
+    assert result is not None, f"result is None, call_log={call_log}"
+    assert "contradictions" in result, f"no contradictions in result: {result}"
+
+
+def _test_mocked_consolidation():
+    """Test consolidation with mocked LLM calls."""
+    from hms.scripts.llm_analyzer import LLMAnalyzer
+    a = LLMAnalyzer()
+    call_log = []
+
+    def mock_fn(prompt, max_tokens=1000, temperature=0.1):
+        call_log.append("called")
+        return MOCK_CONSOLIDATE_RESPONSE
+
+    with patch.object(a, '_call_llm', side_effect=mock_fn):
+        result = a.consolidate(
+            [{'user': 'Python好', 'assistant': '是的'}],
+            {'thinking_patterns': []}
+        )
+    assert result is not None, f"result is None, call_log={call_log}"
+    assert "summary" in result, f"no summary in result: {result}"
 
 
 if __name__ == "__main__":

@@ -260,7 +260,7 @@ class ContextManager:
     def estimate_token_budget(
         self, model_context_window: int = 256000
     ) -> Dict[str, int]:
-        """Dynamic token budget allocation for v2 three-layer context."""
+        """Dynamic token budget allocation with minimum floor protection."""
         budget_cfg = self.cfg.get("context_budget", {})
 
         sys_prompt = budget_cfg.get("system_prompt", 4000)
@@ -291,16 +291,41 @@ class ContextManager:
             response = int(response * scale)
             buffer = int(buffer * scale)
 
-        return {
-            "system_prompt": sys_prompt,
+        # Minimum floor protection — prevent any layer from being zeroed out
+        MIN_FLOOR = {
+            "cognitive_fingerprint": 300,
+            "topic_timelines": 300,
+            "compressed_summaries": 200,
+            "injected_memories": 500,
+            "recent_turns": 1000,
+        }
+        layers = {
             "cognitive_fingerprint": fingerprint,
             "topic_timelines": timelines,
             "compressed_summaries": compressed,
             "injected_memories": memories,
             "recent_turns": recent,
+        }
+        total_deficit = 0
+        for key, minimum in MIN_FLOOR.items():
+            if layers[key] < minimum:
+                total_deficit += minimum - layers[key]
+                layers[key] = minimum
+
+        # Borrow from buffer if there's a deficit
+        if total_deficit > 0 and buffer > total_deficit:
+            buffer -= total_deficit
+
+        return {
+            "system_prompt": sys_prompt,
+            "cognitive_fingerprint": layers["cognitive_fingerprint"],
+            "topic_timelines": layers["topic_timelines"],
+            "compressed_summaries": layers["compressed_summaries"],
+            "injected_memories": layers["injected_memories"],
+            "recent_turns": layers["recent_turns"],
             "response_reserve": response,
             "buffer": buffer,
-            "total_available": sys_prompt + fingerprint + timelines + compressed + memories + recent,
+            "total_available": sys_prompt + sum(layers.values()),
             "window": model_context_window,
         }
 
