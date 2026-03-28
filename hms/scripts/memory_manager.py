@@ -163,8 +163,13 @@ class MemoryManager:
         self,
         config: Optional[Dict[str, Any]] = None,
         tool_impl: Optional[Dict[str, Callable]] = None,
+        context_tier: str = "",
     ) -> None:
         self.cfg = config or self._load_config()
+
+        # Apply context tier if specified
+        if context_tier:
+            self.cfg = self._apply_tier(self.cfg, context_tier)
 
         # Init adapter
         self.adapter = MemoryAdapter(tool_impl)
@@ -185,6 +190,21 @@ class MemoryManager:
                 self.cfg.get("cache_dir", "cache"), "pending_processing.jsonl"
             ),
         })
+
+    @staticmethod
+    def _apply_tier(cfg: Dict[str, Any], tier: str) -> Dict[str, Any]:
+        """Merge a context tier config into the base config."""
+        tiers = cfg.get("context_tiers", {})
+        tier_cfg = tiers.get(tier, {})
+        if not tier_cfg:
+            return cfg
+        merged = dict(cfg)
+        for key, val in tier_cfg.items():
+            if key == "context_budget" and isinstance(val, dict):
+                merged["context_budget"] = {**merged.get("context_budget", {}), **val}
+            else:
+                merged[key] = val
+        return merged
 
     @staticmethod
     def _load_config() -> Dict[str, Any]:
@@ -491,17 +511,27 @@ class MemoryManager:
 def main():
     """CLI entry point for hook/cron integration."""
     if len(sys.argv) < 2:
-        print("Usage: python -m hms.scripts.memory_manager <command>")
+        print("Usage: python -m hms.scripts.memory_manager <command> [--tier 32k|128k|256k|1M]")
         print("Commands: received, process_pending, consolidate, forget")
         sys.exit(1)
 
     command = sys.argv[1]
-    mgr = MemoryManager()
+
+    # Parse optional tier
+    tier = ""
+    args = sys.argv[2:]
+    if "--tier" in args:
+        idx = args.index("--tier")
+        if idx + 1 < len(args):
+            tier = args[idx + 1]
+            args = args[:idx] + args[idx + 2:]
+
+    mgr = MemoryManager(context_tier=tier)
 
     if command == "received":
         # Read message from stdin or args
-        if len(sys.argv) > 2:
-            msg = " ".join(sys.argv[2:])
+        if args:
+            msg = " ".join(args)
         else:
             msg = sys.stdin.read().strip()
         result = mgr.on_message_received(msg)
