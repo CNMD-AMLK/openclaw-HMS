@@ -94,48 +94,6 @@ openclaw-HMS/                    # 项目根目录
 │       ├── memory_manager.py    # 统一调度 (含 Session 连接池 + 资源清理)
 │       └── test_e2e.py          # 端到端测试 (44 tests)
 ```
-openclaw-HMS/                    # 项目根目录
-├── README.md
-├── setup.sh
-├── config.json                  # 系统配置 (支持多档位)
-├── VERSION                      # 版本号
-├── requirements.txt             # Python 依赖
-├── hms/
-│   ├── __init__.py              # 包初始化 (版本号)
-│   ├── __main__.py              # v3.0.4 新增: CLI 入口 (python -m hms)
-│   ├── logging_config.py        # 日志配置
-│   ├── config.json              # 系统配置 (支持多档位)
-│   ├── prompts/                 # LLM 提示词模板
-│   │   ├── perceive.txt         # 感知分析提示
-│   │   ├── collide.txt          # 碰撞检测提示
-│   │   ├── consolidate.txt      # 巩固压缩提示
-│   │   └── fingerprint.txt      # 认知指纹更新提示
-│   ├── cache/                   # 运行时缓存
-│   │   ├── beliefs.json
-│   │   ├── cognitive_fingerprint.json   # 认知指纹
-│   │   ├── topic_timelines.json         # 主题时间线
-│   │   ├── compression_history.json     # 压缩历史
-│   │   ├── decay_state.json
-│   │   ├── embedding_cache.bin          # v3 新增: Embedding 缓存 (二进制)
-│   │   └── pending_processing.jsonl
-│   ├── hooks/                   # OpenClaw 集成接口
-│   │   └── __init__.py          # Cron/Skill 兼容接口 (含 atexit 清理)
-│   ├── logs/
-│   └── scripts/
-│       ├── __init__.py
-│       ├── models.py            # 数据结构 (含 Laplace 平滑)
-│       ├── utils.py             # 公共工具 (estimate_tokens 等)
-│       ├── file_utils.py        # 文件锁/原子写入 (含锁 FD 缓存 + Windows 兼容)
-│       ├── llm_analyzer.py      # LLM 分析核心 (含 circuit breaker + Session 池)
-│       ├── embed_cache.py       # v3 新增: Embedding 预过滤 (含二进制缓存)
-│       ├── perception.py        # 感知引擎 (同步路径仅启发式)
-│       ├── collision.py         # 碰撞引擎 (含情感极性判断 + Embedding 预过滤)
-│       ├── context_manager.py   # 上下文管理 (含指纹限容 + 原子 pop_all)
-│       ├── forgetting.py        # 遗忘引擎 (含脏标记批写)
-│       ├── consolidation.py     # 巩固引擎 (含 general fallback + Embedding 聚类)
-│       ├── memory_manager.py    # 统一调度 (含 Session 连接池 + 资源清理)
-│       └── test_e2e.py          # 端到端测试 (44 tests)
-```
 
 ## 🔑 v3 vs v2 关键区别
 

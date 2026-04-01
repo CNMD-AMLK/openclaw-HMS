@@ -13,6 +13,7 @@ import json
 import logging
 import os
 import sys
+import time
 from typing import Any, Callable, Dict, List, Optional
 
 import threading
@@ -70,11 +71,18 @@ class MemoryAdapter:
         self.close()
 
     def _call_gateway_api(self, endpoint: str, payload: Dict[str, Any]) -> Any:
-        """Call OpenClaw Gateway internal API via HTTP POST with connection pooling."""
+        """Call OpenClaw Gateway internal API via HTTP POST with connection pooling and retry."""
         url = f"{self._gateway_url}{endpoint}"
-        resp = self._session.post(url, json=payload, timeout=self.GATEWAY_TIMEOUT)
-        resp.raise_for_status()
-        return resp.json()
+        for attempt in range(3):
+            try:
+                resp = self._session.post(url, json=payload, timeout=self.GATEWAY_TIMEOUT)
+                resp.raise_for_status()
+                return resp.json()
+            except (requests.exceptions.ConnectionError, requests.exceptions.Timeout):
+                if attempt < 2:
+                    time.sleep(min(2 ** attempt, 5))
+                else:
+                    raise
 
     def health_check(self) -> Dict[str, Any]:
         """Verify Gateway connectivity and memory API endpoints."""
@@ -236,42 +244,6 @@ class MemoryAdapter:
         Uses a thread lock to prevent race conditions in concurrent scenarios.
         """
         if embed_cache is None:
-            return self.store(text, category, importance, metadata)
-
-        with self._dedup_lock:
-            # Search for similar existing memories
-            similar = self.recall(query=text, top_k=3)
-            for mem in similar:
-                existing_text = mem.get("text", "")
-                if not existing_text:
-                    continue
-                sim = embed_cache.similarity(text, existing_text)
-                if sim >= self._dedup_threshold:
-                    # Update existing memory instead of creating new one
-                    logger.info(
-                        "Dedup: merging into existing memory %s (similarity=%.3f)",
-                        mem.get("id", ""), sim,
-                    )
-                    return self.update(mem["id"], importance=max(mem.get("importance", 0), importance))
-
-            return self.store(text, category, importance, metadata)
-
-        with self._dedup_lock:
-            # Search for similar existing memories
-            similar = self.recall(query=text, top_k=3)
-            for mem in similar:
-                existing_text = mem.get("text", "")
-                if not existing_text:
-                    continue
-                sim = embed_cache.similarity(text, existing_text)
-                if sim >= self._dedup_threshold:
-                    # Update existing memory instead of creating new one
-                    logger.info(
-                        "Dedup: merging into existing memory %s (similarity=%.3f)",
-                        mem.get("id", ""), sim,
-                    )
-                    return self.update(mem["id"], importance=max(mem.get("importance", 0), importance))
-
             return self.store(text, category, importance, metadata)
 
 
@@ -451,6 +423,8 @@ class MemoryManager:
         """
         Batch-process all pending entries.
         Each entry: perception → collision → store.
+        Processes at most 50 entries per call to prevent resource exhaustion.
+        Remaining entries will be picked up on the next cron run.
         """
         report = {
             "processed": 0,
@@ -463,6 +437,25 @@ class MemoryManager:
         entries = self.context.pop_all_pending()
         if not entries:
             return report
+
+        # Limit batch size to prevent resource exhaustion
+        max_batch = self.cfg.get("process_pending_max_batch", 50)
+        if len(entries) > max_batch:
+            logger.warning(
+                "Pending batch size %d exceeds limit %d. Processing first %d, "
+                "remaining %d will be processed on next run.",
+                len(entries), max_batch, max_batch, len(entries) - max_batch,
+            )
+            # Push back excess entries
+            excess = entries[max_batch:]
+            for entry in excess:
+                self.context.enqueue(
+                    entry.get("user_message", ""),
+                    entry.get("assistant_reply", ""),
+                    entry.get("session_id", ""),
+                    entry.get("timestamp"),
+                )
+            entries = entries[:max_batch]
 
         for entry in entries:
             try:

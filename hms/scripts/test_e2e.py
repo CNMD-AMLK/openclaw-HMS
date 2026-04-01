@@ -12,7 +12,7 @@ import os
 import sys
 import tempfile
 from datetime import datetime, timezone
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 # Ensure the package is importable
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))

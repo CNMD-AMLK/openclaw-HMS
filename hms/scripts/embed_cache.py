@@ -25,7 +25,6 @@ from typing import Any, Dict, List, Optional, Tuple
 import threading
 
 from .file_utils import file_lock
-from .utils import tokenize
 
 logger = logging.getLogger(__name__)
 

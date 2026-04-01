@@ -245,7 +245,7 @@ class ForgettingEngine:
                 self._states.pop(mid, None)
                 deleted += 1
             except Exception as e:
-                logger.debug(f"Failed to forget memory {mid}: {e}")
+                logger.debug("Failed to forget memory %s: %s", mid, e)
         self._dirty = True
         self.flush()
         return deleted

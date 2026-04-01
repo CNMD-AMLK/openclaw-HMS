@@ -45,18 +45,18 @@ logger = logging.getLogger(__name__)
 
 _manager: Optional[MemoryManager] = None
 _manager_lock = threading.Lock()
-_manager_lock = threading.Lock()
 
 
 def _cleanup() -> None:
     """Clean up resources on process exit."""
     global _manager
-    if _manager is not None:
-        try:
-            _manager.close()
-        except Exception:
-            pass
-        _manager = None
+    with _manager_lock:
+        if _manager is not None:
+            try:
+                _manager.close()
+            except Exception:
+                pass
+            _manager = None
 
 
 atexit.register(_cleanup)
@@ -75,9 +75,13 @@ def get_manager() -> MemoryManager:
 def reset_manager() -> None:
     """Reset the global MemoryManager instance, closing resources first."""
     global _manager
-    if _manager is not None:
-        _manager.close()
-    _manager = None
+    with _manager_lock:
+        if _manager is not None:
+            try:
+                _manager.close()
+            except Exception:
+                pass
+            _manager = None
 
 
 def on_message_received(user_message: str, session_id: str = "") -> Dict[str, Any]:
