@@ -1,2 +1,2 @@
-"""HMS v3.1 — Hierarchical Memory Scaffold."""
-__version__ = "3.1.0"
+"""HMS v3.2 — Hierarchical Memory Scaffold."""
+__version__ = "3.2.0"

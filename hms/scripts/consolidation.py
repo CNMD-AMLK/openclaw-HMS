@@ -1,5 +1,5 @@
 """
-HMS v3 — Consolidation Engine.
+HMS v3.2 — Consolidation Engine.
 
 LLM-driven memory consolidation: replay, compression, relation discovery.
 Replaces v1's frequency-based clustering with semantic understanding.
@@ -9,13 +9,23 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Optional
 
 from .llm_analyzer import LLMAnalyzer
 from .embed_cache import EmbeddingCache
+from .utils import tokenize
 
 logger = logging.getLogger(__name__)
+
+# Emotional keyword patterns for fallback extraction
+_EMOTION_PATTERNS = [
+    (re.compile(r'(太|很|非常|特别|超级|极其)\s*(高兴|开心|兴奋|激动|满意|舒服|棒|爽|快乐|幸福|幸福|感动|惊喜|愤怒|生气|烦躁|焦虑|紧张|害怕|恐惧|悲伤|难过|伤心|失望|痛苦|绝望|恶心|讨厌|烦|郁闷|无聊|孤独|寂寞|疲惫|累|困)'), "high"),
+    (re.compile(r'(!|！){2,}'), "high"),
+    (re.compile(r'(高兴|开心|兴奋|满意|舒服|棒|爽|快乐|幸福|感动|惊喜)'), "positive"),
+    (re.compile(r'(愤怒|生气|烦躁|焦虑|紧张|害怕|恐惧|悲伤|难过|伤心|失望|痛苦|绝望|恶心|讨厌|烦|郁闷|无聊|孤独|寂寞|疲惫|累|困)'), "negative"),
+]
 
 
 class ConsolidationEngine:
@@ -90,7 +100,11 @@ class ConsolidationEngine:
         memory: Dict[str, Any],
         related_memories: List[Dict[str, Any]],
     ) -> Dict[str, Any]:
-        """Re-evaluate a memory against related memories."""
+        """Re-evaluate a memory against related memories.
+
+        Uses Chinese-aware tokenization (jieba if available)
+        instead of naive whitespace split.
+        """
         mid = memory.get("id", "")
         text = memory.get("text", "")
 
@@ -102,21 +116,22 @@ class ConsolidationEngine:
             "issues": [],
         }
 
-        # Simple text overlap check for support/conflict
+        # Use Chinese-aware tokenization for overlap detection
+        words_a = set(tokenize(text))
+
         support_count = 0
         conflict_count = 0
         for rel in related_memories:
-            rel_text = (rel.get("text", "") or "").lower()
+            rel_text = (rel.get("text", "") or "")
             if not rel_text:
                 continue
-            # Basic overlap detection
-            words_a = set(text.lower().split())
-            words_b = set(rel_text.split())
+            # Chinese-aware tokenization
+            words_b = set(tokenize(rel_text))
             overlap = len(words_a & words_b) / max(len(words_a | words_b), 1)
             if overlap > 0.2:
-                # Check sentiment alignment via negation
-                has_neg_a = any(w in text.lower() for w in ["不", "没", "无"])
-                has_neg_b = any(w in rel_text for w in ["不", "没", "无"])
+                # Check sentiment alignment via improved negation detection
+                has_neg_a = _has_negation(text)
+                has_neg_b = _has_negation(rel_text)
                 if has_neg_a != has_neg_b:
                     conflict_count += 1
                 else:
@@ -174,6 +189,7 @@ class ConsolidationEngine:
         summaries: list[str] = []
         key_decisions: list[str] = []
         preferences: list[str] = []
+        emotional_moments: list[Dict[str, Any]] = []
 
         tech_terms = [
             "Python", "Java", "JavaScript", "TypeScript", "Go", "Rust", "C++", "C#",
@@ -226,7 +242,7 @@ class ConsolidationEngine:
                         if marker in sent and len(key_decisions) < 5:
                             key_decisions.append(sent.strip()[:100])
                             break
-            
+
             for marker in pref_markers:
                 if marker in user:
                     sentences = user.split("。")
@@ -234,6 +250,17 @@ class ConsolidationEngine:
                         if marker in sent and len(preferences) < 5:
                             preferences.append(sent.strip()[:100])
                             break
+
+            # Extract emotional moments from user input
+            for pattern, intensity in _EMOTION_PATTERNS:
+                match = pattern.search(user)
+                if match:
+                    emotional_moments.append({
+                        "context": user[:80],
+                        "emotion": match.group(0),
+                        "intensity": 0.8 if intensity == "high" else (0.6 if intensity == "positive" else -0.6),
+                    })
+                    break
 
         # Add general topic only if no topics were matched at all
         if not all_topics:
@@ -243,7 +270,7 @@ class ConsolidationEngine:
             "summary": "; ".join(summaries[:10]) if summaries else "无对话摘要",
             "key_decisions": key_decisions[:5],
             "preferences_revealed": preferences[:5],
-            "emotional_moments": [],
+            "emotional_moments": emotional_moments[:5],
             "entities_mentioned": list(all_entities)[:10],
             "topics": list(all_topics)[:5],
             "thinking_patterns": [],
@@ -425,8 +452,40 @@ class ConsolidationEngine:
                 )
                 created += 1
             except Exception as e:
-                logger.debug(f"Graph record failed: {e}")
+                logger.debug("Graph record failed: %s", e)
         return created
+
+
+# ======================================================================
+# Negation detection helper
+# ======================================================================
+
+# Negation words that truly negate the sentence meaning
+_NEGATION_PATTERNS = [
+    re.compile(r'(?<![好不])不(?=[好是行对喜欢讨厌想要需要应该可以能会])'),
+    re.compile(r'没(?有)?(?[做去来看到听到知道]?)'),
+    re.compile(r'无(?=[法效意义用关])'),
+    re.compile(r'非(?=[法常])'),
+    re.compile(r'未(?=[完成知])'),
+    re.compile(r'(?<![毫])无(?=[疑问问题])'),
+]
+
+
+def _has_negation(text: str) -> bool:
+    """Check if text contains true negation (Chinese-aware).
+
+    Avoids false positives like "不错" (not bad = good), "没问题" (no problem = ok).
+    """
+    text_lower = text.lower()
+    # First check explicit negation patterns
+    for pattern in _NEGATION_PATTERNS:
+        if pattern.search(text):
+            return True
+    # Fallback: check standalone negation words
+    standalone_neg = re.findall(r'(?<![好不])不(?!好|错|行|是|用|太|了|起|住|到|过)', text)
+    if standalone_neg:
+        return True
+    return False
 
 
 # ======================================================================
@@ -467,7 +526,12 @@ def _self_test():
     assert len(rels) >= 1
     print(f"[relations] found {len(rels)} relations")
 
-    print("✓ All self-tests passed.")
+    # Test negation detection
+    assert _has_negation("我不喜欢这个")
+    assert not _has_negation("这个不错")
+    print("[negation] OK")
+
+    print("All self-tests passed.")
 
 
 if __name__ == "__main__":

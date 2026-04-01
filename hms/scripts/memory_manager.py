@@ -1,5 +1,5 @@
 """
-HMS v3.1 — Unified Memory Manager.
+HMS v3.2 — Unified Memory Manager.
 
 Orchestrates the full cognitive memory pipeline:
   perception → collision → storage → consolidation → compression → fingerprint
@@ -51,6 +51,9 @@ class MemoryAdapter:
             os.environ.get("OPENCLAW_GATEWAY_URL", "http://127.0.0.1:3578")
         )
 
+        # Dedup threshold
+        self._dedup_threshold = self.cfg.get("dedup_similarity_threshold", 0.95)
+
     def close(self) -> None:
         """Close the HTTP session and release connections."""
         if self._session:
@@ -70,6 +73,57 @@ class MemoryAdapter:
         resp.raise_for_status()
         return resp.json()
 
+    def health_check(self) -> Dict[str, Any]:
+        """Verify Gateway connectivity and memory API endpoints."""
+        result = {
+            "gateway_reachable": False,
+            "memory_api_available": False,
+            "graph_api_available": False,
+            "gateway_url": self._gateway_url,
+            "errors": [],
+        }
+        # Check gateway reachability
+        try:
+            resp = self._session.get(
+                f"{self._gateway_url}/api/v1/health",
+                timeout=5,
+            )
+            if resp.status_code == 200:
+                result["gateway_reachable"] = True
+        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
+            result["errors"].append(f"Gateway unreachable: {e}")
+            return result
+
+        # Check memory API
+        try:
+            resp = self._session.post(
+                f"{self._gateway_url}/api/tools/memory-recall",
+                json={"query": "health", "top_k": 1},
+                timeout=5,
+            )
+            if resp.status_code in (200, 400, 422):
+                result["memory_api_available"] = True
+            else:
+                result["errors"].append(f"Memory API returned HTTP {resp.status_code}")
+        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
+            result["errors"].append(f"Memory API error: {e}")
+
+        # Check graph API
+        try:
+            resp = self._session.post(
+                f"{self._gateway_url}/api/tools/gm-search",
+                json={"query": "health", "depth": 1},
+                timeout=5,
+            )
+            if resp.status_code in (200, 400, 422):
+                result["graph_api_available"] = True
+            else:
+                result["errors"].append(f"Graph API returned HTTP {resp.status_code}")
+        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
+            result["errors"].append(f"Graph API error: {e}")
+
+        return result
+
     def store(self, text: str, category: str, importance: int, metadata: str) -> Any:
         try:
             return self._call_gateway_api("/api/tools/memory-store", {
@@ -82,7 +136,7 @@ class MemoryAdapter:
             fn = self._tools.get("memory_store")
             if fn:
                 return fn(text=text, category=category, importance=importance, metadata=metadata)
-            logger.debug(f"Gateway store failed, using stub: {e}")
+            logger.debug("Gateway store failed, using stub: %s", e)
             return {"status": "stubbed", "text": text[:40]}
 
     def recall(self, query: str, top_k: int = 5, category: Optional[str] = None) -> List[Dict[str, Any]]:
@@ -99,7 +153,7 @@ class MemoryAdapter:
             if fn:
                 memories = fn(query=query, top_k=top_k, category=category) or []
                 return self._filter_forgotten(memories)
-            logger.debug(f"Gateway recall failed: {e}")
+            logger.debug("Gateway recall failed: %s", e)
             return []
 
     @staticmethod
@@ -108,13 +162,6 @@ class MemoryAdapter:
         return [m for m in memories if m.get("importance", 1) > 0]
 
     def update(self, memory_id: str, **kwargs: Any) -> Any:
-        """Update a memory. Tries Gateway API first, falls back to injected tool."""
-        # FIX: try Gateway API first (was missing entirely)
-        try:
-            payload = {"memory_id": memory_id, **kwargs}
-            return self._call_gateway_api("/api/tools/memory-update", payload)
-        except Exception as e:
-            logger.debug(f"Gateway update failed: {e}")
         fn = self._tools.get("memory_update")
         kwargs["memory_id"] = memory_id
         if fn:
@@ -130,7 +177,7 @@ class MemoryAdapter:
             })
             return result
         except Exception as e:
-            logger.debug(f"Gateway forget failed: {e}")
+            logger.debug("Gateway forget failed: %s", e)
         # Try injected tool
         fn = self._tools.get("memory_forget")
         if fn:
@@ -143,7 +190,7 @@ class MemoryAdapter:
                 "metadata": json.dumps({"action": "soft_delete", "original_id": memory_id}),
             })
         except Exception as e:
-            logger.debug(f"Soft-delete forget failed: {e}")
+            logger.debug("Soft-delete forget failed: %s", e)
             return {"status": "stubbed", "memory_id": memory_id}
 
     def graph_record(self, source: str, target: str, relation: str, context: str = "") -> Any:
@@ -158,7 +205,7 @@ class MemoryAdapter:
             fn = self._tools.get("gm_record")
             if fn:
                 return fn(source=source, target=target, relation=relation, context=context)
-            logger.debug(f"Gateway gm-record failed: {e}")
+            logger.debug("Gateway gm-record failed: %s", e)
             return {"status": "stubbed"}
 
     def graph_search(self, query: str, depth: int = 2) -> List[Dict[str, Any]]:
@@ -172,8 +219,37 @@ class MemoryAdapter:
             fn = self._tools.get("gm_search")
             if fn:
                 return fn(query=query, depth=depth) or []
-            logger.debug(f"Gateway gm-search failed: {e}")
+            logger.debug("Gateway gm-search failed: %s", e)
             return []
+
+    def store_with_dedup(
+        self, text: str, category: str, importance: int, metadata: str,
+        embed_cache: Optional[EmbeddingCache] = None,
+    ) -> Any:
+        """Store a memory after checking for near-duplicates.
+
+        If a highly similar memory exists (above dedup_threshold),
+        update the existing one instead of creating a new entry.
+        """
+        if embed_cache is None:
+            return self.store(text, category, importance, metadata)
+
+        # Search for similar existing memories
+        similar = self.recall(query=text, top_k=3)
+        for mem in similar:
+            existing_text = mem.get("text", "")
+            if not existing_text:
+                continue
+            sim = embed_cache.similarity(text, existing_text)
+            if sim >= self._dedup_threshold:
+                # Update existing memory instead of creating new one
+                logger.info(
+                    "Dedup: merging into existing memory %s (similarity=%.3f)",
+                    mem.get("id", ""), sim,
+                )
+                return self.update(mem["id"], importance=max(mem.get("importance", 0), importance))
+
+        return self.store(text, category, importance, metadata)
 
 
 # ======================================================================
@@ -183,7 +259,7 @@ class MemoryAdapter:
 
 class MemoryManager:
     """
-    Main HMS v3 orchestrator. Ties all modules together.
+    Main HMS v3.2 orchestrator. Ties all modules together.
 
     Entry points:
       - on_message_received(): sync perception + context injection
@@ -259,9 +335,26 @@ class MemoryManager:
                     with open(p, "r", encoding="utf-8") as f:
                         return json.load(f)
                 except Exception as e:
-                    logger.debug(f"Config load failed for {p}: {e}")
+                    logger.debug("Config load failed for %s: %s", p, e)
                     continue
         return {}
+
+    def health_check(self) -> Dict[str, Any]:
+        """Run full system health check at startup."""
+        result = {
+            "gateway": self.adapter.health_check(),
+            "llm": self.perception.llm.health_check(),
+            "embedding": self.embed_cache.get_stats(),
+            "overall": "healthy",
+        }
+        # Check if any critical component is down
+        if not result["gateway"]["gateway_reachable"]:
+            result["overall"] = "degraded"
+            logger.warning("Health check: Gateway unreachable, system will use stubs")
+        if not result["llm"]["chat_api_available"]:
+            result["overall"] = "degraded"
+            logger.warning("Health check: LLM chat API unavailable, falling back to heuristics")
+        return result
 
     # ==================================================================
     # 1. On message received (SYNC)
@@ -340,6 +433,7 @@ class MemoryManager:
             "processed": 0,
             "stored": 0,
             "collisions": 0,
+            "dedup_merged": 0,
             "errors": [],
         }
 
@@ -371,7 +465,7 @@ class MemoryManager:
         if not perception.get("should_remember", True):
             return
 
-        # 2. Store perception
+        # 2. Store perception with dedup
         metadata = json.dumps({
             "belief_strength": "uncertain",
             "belief_confidence": 0.5,
@@ -388,11 +482,12 @@ class MemoryManager:
         }, ensure_ascii=False)
 
         try:
-            self.adapter.store(
+            self.adapter.store_with_dedup(
                 text=perception.get("text_for_store", user_msg),
                 category=perception.get("category", "fact"),
                 importance=perception.get("importance", 5),
                 metadata=metadata,
+                embed_cache=self.embed_cache,
             )
             report["stored"] += 1
         except Exception as e:
@@ -482,7 +577,7 @@ class MemoryManager:
         try:
             all_memories = self.adapter.recall(query="记忆回顾", top_k=100) or []
         except Exception as e:
-            logger.debug(f"Memory recall for replay failed: {e}")
+            logger.debug("Memory recall for replay failed: %s", e)
             all_memories = []
 
         if all_memories:
@@ -501,7 +596,7 @@ class MemoryManager:
                             importance_delta=result.get("importance_adjustment", 0),
                         )
                     except Exception as e:
-                        logger.debug(f"Memory update failed for {mid}: {e}")
+                        logger.debug("Memory update failed for %s: %s", mid, e)
                     report["replayed"] += 1
 
         # 5. Relation discovery
@@ -530,22 +625,11 @@ class MemoryManager:
         Weekly forgetting pass.
         Evaluate all memories and forget weak ones.
         """
-        # FIX: use multiple broad queries instead of a single meaningless one
-        # to cover more memories for evaluation
-        broad_queries = ["", "记忆", "用户", "项目", "工作", "学习", "生活", "技术"]
-        all_memories: List[Dict[str, Any]] = []
-        seen_ids = set()
-
-        for q in broad_queries:
-            try:
-                memories = self.adapter.recall(query=q, top_k=100) or []
-                for m in memories:
-                    mid = m.get("id", "")
-                    if mid and mid not in seen_ids:
-                        all_memories.append(m)
-                        seen_ids.add(mid)
-            except Exception as e:
-                logger.debug(f"Memory recall for forget failed with query '{q}': {e}")
+        try:
+            all_memories = self.adapter.recall(query="所有记忆", top_k=500) or []
+        except Exception as e:
+            logger.debug("Memory recall for forget failed: %s", e)
+            all_memories = []
 
         evaluation = self.forgetting.evaluate_all(all_memories)
 
@@ -560,54 +644,6 @@ class MemoryManager:
             "kept": len(evaluation["to_keep"]),
             "forget_ratio": evaluation["report"]["forget_ratio"],
         }
-
-    # ==================================================================
-    # Health check
-    # ==================================================================
-
-    def health_check(self) -> Dict[str, Any]:
-        """System health status check."""
-        import sys
-        import time
-
-        status = {
-            "version": "3.1.0",
-            "python": sys.version,
-            "components": {},
-        }
-
-        # LLM availability
-        try:
-            test = self.perception.llm._call_llm("ping", max_tokens=5)
-            status["components"]["llm"] = "ok" if test else "degraded"
-        except Exception as e:
-            status["components"]["llm"] = f"error: {e}"
-
-        # Embedding availability
-        try:
-            if self.embed_cache:
-                enc_type = self.embed_cache._encoder_type
-                status["components"]["embedding"] = f"ok ({enc_type})"
-            else:
-                status["components"]["embedding"] = "not_initialized"
-        except Exception as e:
-            status["components"]["embedding"] = f"error: {e}"
-
-        # Storage state
-        status["components"]["storage"] = {
-            "pending_count": self.context.get_pending_count(),
-            "fingerprint_version": self.context._fingerprint.get("version", 0),
-            "timeline_topics": len(self.context._timelines),
-            "compression_history": len(self.context._compression_history),
-        }
-
-        # Circuit breaker
-        status["components"]["circuit_breaker"] = {
-            "failures": self.perception.llm._consecutive_failures,
-            "open": time.time() < self.perception.llm._circuit_open_until,
-        }
-
-        return status
 
     def close(self) -> None:
         """Close all resources (HTTP sessions, file descriptors)."""
@@ -649,7 +685,7 @@ def main():
     """CLI entry point for hook/cron integration."""
     if len(sys.argv) < 2:
         print("Usage: python -m hms <command> [--tier 32k|128k|256k|1M]")
-        print("Commands: received, process_pending, consolidate, forget, status")
+        print("Commands: received, process_pending, consolidate, forget, health")
         sys.exit(1)
 
     command = sys.argv[1]
@@ -686,9 +722,9 @@ def main():
         result = mgr.forget()
         print(json.dumps(result, ensure_ascii=False, indent=2))
 
-    elif command == "status":
-        health = mgr.health_check()
-        print(json.dumps(health, ensure_ascii=False, indent=2))
+    elif command == "health":
+        result = mgr.health_check()
+        print(json.dumps(result, ensure_ascii=False, indent=2))
 
     else:
         print(f"Unknown command: {command}")

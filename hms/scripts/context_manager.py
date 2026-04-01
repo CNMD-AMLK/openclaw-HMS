@@ -1,5 +1,5 @@
 """
-HMS v3.1 — Context Manager.
+HMS v3.2 — Context Manager.
 
 Three-layer infinite context architecture:
   Layer 1: Working memory (recent turns)
@@ -15,7 +15,7 @@ import json
 import logging
 import os
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional
 
 from .file_utils import (
     atomic_write_json,
@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 
 class ContextManager:
     """
-    Orchestrates the HMS v3 cognitive layer:
+    Orchestrates the HMS v3.2 cognitive layer:
       - Async perception pipeline (pending -> batch LLM analysis)
       - Three-layer context composition for infinite context
       - Dynamic token budget allocation
@@ -44,6 +44,9 @@ class ContextManager:
             "pending_path", "cache/pending_processing.jsonl"
         )
         self._cache_dir = os.path.dirname(self._pending_path) or "cache"
+
+        # Pending queue size limit
+        self._max_pending = self.cfg.get("max_pending_size", 1000)
 
         # File paths for v2 structures
         self._fingerprint_path = os.path.join(
@@ -65,23 +68,14 @@ class ContextManager:
     # Persistence helpers
     # ==================================================================
 
-    def save_state(self, changed: Optional[Set[str]] = None) -> None:
-        """Persist all state to disk atomically with locks.
-
-        Args:
-            changed: Optional set of changed keys ('fingerprint', 'timelines',
-                     'compression_history'). If None, saves all three.
-        """
-        all_keys = changed or {"fingerprint", "timelines", "compression_history"}
-        if "fingerprint" in all_keys:
-            with file_lock(self._fingerprint_path):
-                atomic_write_json(self._fingerprint_path, self._fingerprint)
-        if "timelines" in all_keys:
-            with file_lock(self._timelines_path):
-                atomic_write_json(self._timelines_path, self._timelines)
-        if "compression_history" in all_keys:
-            with file_lock(self._compression_path):
-                atomic_write_json(self._compression_path, self._compression_history)
+    def save_state(self) -> None:
+        """Persist all state to disk atomically with locks."""
+        with file_lock(self._fingerprint_path):
+            atomic_write_json(self._fingerprint_path, self._fingerprint)
+        with file_lock(self._timelines_path):
+            atomic_write_json(self._timelines_path, self._timelines)
+        with file_lock(self._compression_path):
+            atomic_write_json(self._compression_path, self._compression_history)
 
     # ==================================================================
     # Pending queue
@@ -94,7 +88,20 @@ class ContextManager:
         session_id: str = "",
         timestamp: Optional[str] = None,
     ) -> None:
-        """Add a conversation turn to the pending processing queue."""
+        """Add a conversation turn to the pending processing queue.
+
+        Enforces max_pending_size limit — drops oldest entries when full.
+        """
+        # Check pending size before adding
+        count = self.get_pending_count()
+        if count >= self._max_pending:
+            logger.warning(
+                "Pending queue full (%d/%d). Dropping oldest entries.",
+                count, self._max_pending,
+            )
+            # Drop oldest 20%
+            self._trim_pending(int(self._max_pending * 0.2))
+
         ts = timestamp or datetime.now(timezone.utc).isoformat()
         entry = {
             "user_message": user_message,
@@ -104,12 +111,22 @@ class ContextManager:
         }
         safe_append_jsonl(self._pending_path, entry)
 
-    def read_pending(self) -> List[Dict[str, Any]]:
-        """Read all pending entries without clearing (with lock for consistency)."""
+    def _trim_pending(self, count: int) -> None:
+        """Remove the oldest N entries from pending queue."""
         if not os.path.isfile(self._pending_path):
-            return []
+            return
         with file_lock(self._pending_path):
-            return safe_read_jsonl(self._pending_path)
+            with open(self._pending_path, "r+", encoding="utf-8") as f:
+                lines = [l for l in f if l.strip()]
+                if len(lines) > count:
+                    lines = lines[count:]
+                f.seek(0)
+                f.truncate(0)
+                f.writelines(lines)
+
+    def read_pending(self) -> List[Dict[str, Any]]:
+        """Read all pending entries without clearing."""
+        return safe_read_jsonl(self._pending_path)
 
     def pop_all_pending(self) -> List[Dict[str, Any]]:
         """Atomically read and clear all pending entries.
@@ -183,13 +200,9 @@ class ContextManager:
                     existing = existing[-cap:]
                 self._fingerprint[key] = existing
 
-            # FIX: type validation for emotional_triggers
-            triggers = self._fingerprint.get("emotional_triggers", {})
-            if not isinstance(triggers, dict):
-                triggers = {}
             for valence in ["positive", "negative"]:
                 existing = list(dict.fromkeys(
-                    triggers.get(valence, [])
+                    self._fingerprint.get("emotional_triggers", {}).get(valence, [])
                 ))
                 for item in (
                     new_fingerprint.get("emotional_triggers", {}).get(valence, [])
@@ -207,8 +220,7 @@ class ContextManager:
             self._fingerprint["last_updated"] = datetime.now(timezone.utc).isoformat()
             self._fingerprint["version"] = self._fingerprint.get("version", 0) + 1
 
-        # FIX: only save fingerprint, not all three files
-        self.save_state({"fingerprint"})
+        self.save_state()
 
     # ==================================================================
     # Topic timelines
@@ -220,8 +232,6 @@ class ContextManager:
     def update_timelines(self, timeline_entries: List[Dict[str, Any]]) -> None:
         """Add entries to topic timelines."""
         max_entries = self.cfg.get("timeline_max_entries_per_topic", 10)
-        # FIX: cap timeline summary length to prevent unbounded growth
-        max_summary_len = self.cfg.get("timeline_max_summary_len", 1000)
 
         for entry in timeline_entries:
             topic = entry.get("topic", "")
@@ -257,14 +267,11 @@ class ContextManager:
                 ]
                 if merged_summaries:
                     tl["summary"] = (
-                        tl.get("summary", "") + " " + " | ".join(merged_summaries)
+                        tl.get("summary", "") + " | ".join(merged_summaries)
                     ).strip()
                     tl["total_entries_merged"] = tl.get("total_entries_merged", 0) + len(
                         merge
                     )
-                    # FIX: truncate summary to prevent unbounded growth
-                    if len(tl["summary"]) > max_summary_len:
-                        tl["summary"] = tl["summary"][-max_summary_len:]
                 tl["entries"] = keep
 
         # Cap total topics
@@ -278,8 +285,7 @@ class ContextManager:
             )
             self._timelines = dict(sorted_topics[:max_topics])
 
-        # FIX: only save timelines, not all three files
-        self.save_state({"timelines"})
+        self.save_state()
 
     # ==================================================================
     # Compression history
@@ -288,16 +294,7 @@ class ContextManager:
     def add_compressed_summary(self, summary: Dict[str, Any]) -> None:
         """Add a compressed conversation summary."""
         self._compression_history.append(summary)
-        # FIX: cap compression history to prevent unbounded growth
-        max_items = self.cfg.get("max_compression_history", 200)
-        if len(self._compression_history) > max_items:
-            self._compression_history.sort(
-                key=lambda x: x.get("created_at", ""),
-                reverse=True,
-            )
-            self._compression_history = self._compression_history[:max_items]
-        # FIX: only save compression_history, not all three files
-        self.save_state({"compression_history"})
+        self.save_state()
 
     def get_compressed_summaries(
         self, since_hours: Optional[float] = None
@@ -353,9 +350,7 @@ class ContextManager:
 
         total = sys_prompt + fingerprint + timelines + compressed + memories + recent + response + buffer
         if total > model_context_window:
-            # FIX: prevent division by zero when total == sys_prompt
-            denom = max(total - sys_prompt, 1)
-            scale = (model_context_window - sys_prompt) / denom
+            scale = (model_context_window - sys_prompt) / (total - sys_prompt)
             fingerprint = int(fingerprint * scale)
             timelines = int(timelines * scale)
             compressed = int(compressed * scale)
@@ -490,6 +485,39 @@ class ContextManager:
             "budget": budget,
         }
 
+    def format_context(
+        self,
+        system_prompt: str = "",
+        injected_memories: Optional[List[Dict[str, Any]]] = None,
+        recent_turns: Optional[List[Dict[str, str]]] = None,
+        model_context_window: int = 256000,
+    ) -> str:
+        """Compose and format context as a single injectable string.
+
+        Convenience wrapper around compose_context() that returns
+        a ready-to-use text block for LLM system prompts.
+        """
+        ctx = self.compose_context(
+            system_prompt=system_prompt or "",
+            injected_memories=injected_memories or [],
+            recent_turns=recent_turns or [],
+            model_context_window=model_context_window,
+        )
+        parts = []
+        if ctx.get("system_prompt"):
+            parts.append(ctx["system_prompt"])
+        if ctx.get("cognitive_fingerprint"):
+            parts.append(ctx["cognitive_fingerprint"])
+        if ctx.get("topic_timelines"):
+            parts.append(ctx["topic_timelines"])
+        if ctx.get("compressed_summaries"):
+            parts.append(ctx["compressed_summaries"])
+        if ctx.get("injected_memories_section"):
+            parts.append(f"## 相关记忆\n{ctx['injected_memories_section']}")
+        if ctx.get("recent_section"):
+            parts.append(f"## 最近对话\n{ctx['recent_section']}")
+        return "\n\n".join(parts)
+
     # ==================================================================
     # Formatting helpers
     # ==================================================================
@@ -537,13 +565,18 @@ class ContextManager:
 
     @staticmethod
     def _format_compressed_summaries(summaries: List[Dict[str, Any]]) -> str:
+        """Format compressed summaries, dynamically sized by token budget.
+
+        Instead of hardcoding [-5:], this uses all summaries within
+        the time window, letting truncate_to_tokens enforce the budget.
+        """
         if not summaries:
             return ""
         parts = ["## 近期对话摘要"]
-        for s in summaries[-5:]:  # last 5 summaries
+        for s in summaries:
             text = s.get("summary_text", s.get("summary", ""))
             if text:
-                parts.append(f"- {text[:200]}")
+                parts.append(f"- {text}")
         return "\n".join(parts)
 
     @staticmethod
@@ -568,9 +601,7 @@ class ContextManager:
             if i < len(text) and text[i] in safe_breakpoints:
                 cut = i + 1
                 break
-        result = text[:cut] + "\n...(truncated)"
-        # FIX: ensure valid UTF-8 (don't cut mid-character)
-        return result.encode("utf-8", errors="ignore").decode("utf-8")
+        return text[:cut] + "\n...(truncated)"
 
 
 # ======================================================================
@@ -619,10 +650,30 @@ def _self_test():
         assert "topic_timelines" in ctx
         print(f"[context] tokens_est={ctx['total_tokens_estimated']}")
 
+        # Test format_context
+        formatted = cm.format_context(
+            system_prompt="你是一个助手",
+            injected_memories=[{"text": "用户喜欢Python", "importance": 7}],
+            recent_turns=[{"user": "你好", "assistant": "你好！"}],
+        )
+        assert isinstance(formatted, str)
+        assert "用户认知指纹" in formatted or "你是一个助手" in formatted
+        print(f"[format_context] OK, len={len(formatted)}")
+
         # Test safe truncation
         truncated = ContextManager.truncate_to_tokens("这是一个很长的中文句子。它应该在标点处截断。", 5)
         assert "truncated" in truncated or "截断" in truncated
         print(f"[truncate] OK")
+
+        # Test pending size limit
+        cm2 = ContextManager({
+            "pending_path": os.path.join(tmpdir, "pending2.jsonl"),
+            "max_pending_size": 5,
+        })
+        for i in range(10):
+            cm2.enqueue(f"msg{i}", f"reply{i}")
+        assert cm2.get_pending_count() <= 5
+        print(f"[pending_limit] OK, count={cm2.get_pending_count()}")
 
         print("All self-tests passed.")
 

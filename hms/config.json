@@ -1,5 +1,5 @@
 {
-  "_comment": "HMS v3.1 Configuration — Multi-tier context window support",
+  "_comment": "HMS v3.2 Configuration — Multi-tier context window support + Chinese NLP improvements",
 
   "cache_dir": "cache",
 
@@ -45,12 +45,15 @@
   "timeline_update_interval_hours": 24,
   "timeline_max_topics": 20,
   "timeline_max_entries_per_topic": 10,
-  "timeline_max_summary_len": 1000,
 
   "fingerprint_update_interval_hours": 12,
   "fingerprint_max_tokens": 4000,
 
-  "max_compression_history": 200,
+  "_comment_dedup": "=== Memory Dedup Configuration ===",
+  "dedup_similarity_threshold": 0.95,
+
+  "_comment_pending": "=== Pending Queue Configuration ===",
+  "max_pending_size": 1000,
 
   "_comment_context": "=== Context Window Tiers ===",
   "_comment_tiers": "32k=low, 128k=mid, 256k=default, 1M=ultra",
@@ -114,13 +117,13 @@
       "model_context_window": 1048576,
       "context_budget": {
         "system_prompt": 4000,
-        "cognitive_fingerprint_ratio": 0.01,
-        "topic_timelines_ratio": 0.02,
-        "compressed_summaries_ratio": 0.03,
-        "injected_memories_ratio": 0.18,
-        "recent_turns_ratio": 0.40,
-        "response_reserve_ratio": 0.12,
-        "buffer_ratio": 0.04
+        "cognitive_fingerprint_ratio": 0.005,
+        "topic_timelines_ratio": 0.01,
+        "compressed_summaries_ratio": 0.02,
+        "injected_memories_ratio": 0.20,
+        "recent_turns_ratio": 0.35,
+        "response_reserve_ratio": 0.15,
+        "buffer_ratio": 0.03
       },
       "retrieval_top_k": 80,
       "working_memory_recent_turns": 200,

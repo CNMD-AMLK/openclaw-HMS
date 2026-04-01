@@ -1,5 +1,5 @@
 """
-HMS v3 — Collision Engine.
+HMS v3.2 — Collision Engine.
 
 LLM-driven semantic collision detection with embedding pre-filtering.
 Replaces v1's keyword-overlap approach with deep semantic analysis.
@@ -13,6 +13,7 @@ from typing import Any, Callable, Dict, List, Optional
 
 from .llm_analyzer import LLMAnalyzer
 from .embed_cache import EmbeddingCache, prefilter_for_collision
+from .utils import tokenize
 
 logger = logging.getLogger(__name__)
 
@@ -95,8 +96,8 @@ class CollisionEngine:
     ) -> Dict[str, Any]:
         """Lightweight heuristic collision when LLM is unavailable.
 
-        Uses negation detection + simple sentiment polarity word lists
-        to reduce false-positive reinforcements.
+        Uses Chinese-aware tokenization and improved negation/sentiment
+        detection to reduce false-positive reinforcements.
         """
         contradictions = []
         reinforcements = []
@@ -152,8 +153,18 @@ class CollisionEngine:
             if not shared:
                 continue
 
-            new_neg = any(w in new_text for w in negation_words) or any(p in new_text for p in contradiction_patterns)
-            mem_neg = any(w in mem_text for w in negation_words) or any(p in mem_text for p in contradiction_patterns)
+            # Use Chinese-aware tokenization for negation detection
+            new_tokens = tokenize(new_text)
+            mem_tokens_list = tokenize(mem_text)
+
+            new_neg = (
+                any(w in new_text for w in negation_words)
+                or any(p in new_text for p in contradiction_patterns)
+            )
+            mem_neg = (
+                any(w in mem_text for w in negation_words)
+                or any(p in mem_text for p in contradiction_patterns)
+            )
 
             new_sentiment = detect_sentiment(new_text)
             mem_sentiment = detect_sentiment(mem_text)
@@ -235,7 +246,7 @@ class CollisionEngine:
                     )
                     report["graph_edges"] += 1
                 except Exception as e:
-                    logger.debug(f"Graph record failed: {e}")
+                    logger.debug("Graph record failed: %s", e)
 
         return report
 

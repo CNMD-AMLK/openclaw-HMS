@@ -1,5 +1,5 @@
 """
-HMS v3 — LLM Analyzer Core.
+HMS v3.2 — LLM Analyzer Core.
 
 Replaces all dictionary-based analysis with LLM calls.
 Falls back to lightweight heuristics when LLM is unavailable.
@@ -61,6 +61,10 @@ class LLMAnalyzer:
         self._circuit_failure_threshold = 5
         self._circuit_cooldown_seconds = 300  # 5 minutes
 
+        # Persisted circuit breaker state
+        self._cb_state_path = self.cfg.get("cache_dir", "cache") + "/circuit_breaker.json" if self.cfg.get("cache_dir") else None
+        self._load_circuit_breaker_state()
+
     def close(self) -> None:
         """Close the HTTP session and release connections."""
         if self._session:
@@ -105,6 +109,34 @@ class LLMAnalyzer:
                             os.environ.setdefault(key, val.strip())
             cls._env_loaded = True
 
+    def _load_circuit_breaker_state(self) -> None:
+        """Load persisted circuit breaker state if available."""
+        if not self._cb_state_path or not os.path.isfile(self._cb_state_path):
+            return
+        try:
+            with open(self._cb_state_path, "r") as f:
+                data = json.load(f)
+            self._consecutive_failures = data.get("consecutive_failures", 0)
+            self._circuit_open_until = data.get("circuit_open_until", 0.0)
+            logger.debug("Loaded circuit breaker state: failures=%d open_until=%.0f",
+                         self._consecutive_failures, self._circuit_open_until)
+        except (json.JSONDecodeError, IOError):
+            pass
+
+    def _save_circuit_breaker_state(self) -> None:
+        """Persist circuit breaker state to disk."""
+        if not self._cb_state_path:
+            return
+        try:
+            os.makedirs(os.path.dirname(self._cb_state_path), exist_ok=True)
+            with open(self._cb_state_path, "w") as f:
+                json.dump({
+                    "consecutive_failures": self._consecutive_failures,
+                    "circuit_open_until": self._circuit_open_until,
+                }, f)
+        except IOError as e:
+            logger.debug("Failed to save circuit breaker state: %s", e)
+
     # ==================================================================
     # Core LLM call
     # ==================================================================
@@ -127,12 +159,18 @@ class LLMAnalyzer:
             self._budget_date = today
 
         if self._token_count >= self._budget:
-            return None  # budget exhausted
+            logger.warning(
+                "LLM budget exhausted (%d/%d tokens). Skipping call, falling back to heuristic.",
+                self._token_count, self._budget,
+            )
+            return None
 
         # Circuit breaker check
         now = time.time()
         if now < self._circuit_open_until:
-            return None  # circuit is open, skip call
+            logger.debug("Circuit breaker open, skipping LLM call (reopens in %.0fs)",
+                         self._circuit_open_until - now)
+            return None
 
         for attempt in range(self._max_retries):
             try:
@@ -142,6 +180,7 @@ class LLMAnalyzer:
                     self._token_count += estimate_tokens(result)
                     # Reset circuit breaker on success
                     self._consecutive_failures = 0
+                    self._save_circuit_breaker_state()
                     return result
                 # Empty result — not a failure, just unavailable
                 return None
@@ -161,6 +200,7 @@ class LLMAnalyzer:
                     self._consecutive_failures += 1
                 elif status == 401 or status == 403:
                     # Auth error: no point retrying
+                    logger.error("Gateway auth error (HTTP %d), opening circuit", status)
                     self._trip_circuit()
                     return None
                 else:
@@ -176,7 +216,7 @@ class LLMAnalyzer:
                 self._consecutive_failures += 1
 
             except Exception as e:
-                logger.debug(f"LLM call failed: {e}")
+                logger.debug("LLM call failed: %s", e)
                 self._consecutive_failures += 1
                 if attempt < self._max_retries - 1:
                     time.sleep(min(2 ** attempt, 30))
@@ -191,6 +231,11 @@ class LLMAnalyzer:
     def _trip_circuit(self) -> None:
         """Open the circuit breaker — pause all LLM calls."""
         self._circuit_open_until = time.time() + self._circuit_cooldown_seconds
+        self._save_circuit_breaker_state()
+        logger.warning(
+            "Circuit breaker tripped after %d consecutive failures. Cooldown: %ds",
+            self._consecutive_failures, self._circuit_cooldown_seconds,
+        )
 
     @staticmethod
     def _parse_retry_after(response: Optional[requests.Response]) -> float:
@@ -225,13 +270,13 @@ class LLMAnalyzer:
         )
         resp.raise_for_status()
         data = resp.json()
-        
+
         # Safely extract message from response
         choices = data.get("choices", [])
         if not choices:
             logger.warning("Empty choices in API response")
             return None
-        
+
         message = choices[0].get("message", {})
         content = message.get("content")
         if content:
@@ -241,6 +286,50 @@ class LLMAnalyzer:
         if reasoning:
             return reasoning.strip()
         return None
+
+    # ==================================================================
+    # Health check
+    # ==================================================================
+
+    def health_check(self) -> Dict[str, Any]:
+        """Verify Gateway connectivity and API availability."""
+        result = {
+            "gateway_reachable": False,
+            "chat_api_available": False,
+            "gateway_url": self._gateway_url,
+            "errors": [],
+        }
+        # Check gateway reachability
+        try:
+            resp = self._session.get(
+                f"{self._gateway_url}/api/v1/health",
+                timeout=5,
+            )
+            if resp.status_code == 200:
+                result["gateway_reachable"] = True
+        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
+            result["errors"].append(f"Gateway unreachable: {e}")
+            return result
+
+        # Check chat API
+        try:
+            resp = self._session.post(
+                f"{self._gateway_url}/api/v1/chat/completions",
+                json={
+                    "model": self._model,
+                    "messages": [{"role": "user", "content": "hi"}],
+                    "max_tokens": 10,
+                },
+                timeout=10,
+            )
+            if resp.status_code in (200, 400, 422):
+                result["chat_api_available"] = True
+            else:
+                result["errors"].append(f"Chat API returned HTTP {resp.status_code}")
+        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
+            result["errors"].append(f"Chat API error: {e}")
+
+        return result
 
     # ==================================================================
     # Prompt loading

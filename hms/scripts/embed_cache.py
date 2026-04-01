@@ -1,5 +1,5 @@
 """
-HMS v3 — Embedding Cache & Similarity Engine.
+HMS v3.2 — Embedding Cache & Similarity Engine.
 
 Provides local embedding computation for pre-filtering memories before
 expensive LLM calls. Reduces LLM usage by 60-70%.
@@ -25,6 +25,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import threading
 
 from .file_utils import file_lock
+from .utils import tokenize
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +47,9 @@ class CharNGramEncoder:
     """
     Lightweight text encoder using character n-gram hashing.
     Produces fixed-size vectors without any external dependencies.
+
+    v3.2 improvement: uses jieba-aware tokenization when available
+    for better semantic quality on Chinese text.
     """
 
     def __init__(self, dim: int = 256, ngram_range: Tuple[int, int] = (2, 3)):
@@ -61,9 +65,27 @@ class CharNGramEncoder:
         return grams
 
     def encode(self, text: str) -> List[float]:
-        """Encode text into a fixed-dim vector via hashed char n-grams."""
+        """Encode text into a fixed-dim vector via hashed char n-grams.
+
+        For Chinese text, uses jieba tokenization if available to
+        produce word-level features instead of raw char n-grams.
+        """
         if not text:
             return [0.0] * self.dim
+
+        # For Chinese text, use tokenized words as features
+        tokens = tokenize(text)
+        if tokens:
+            vec = [0.0] * self.dim
+            for token in tokens:
+                h = int(hashlib.md5(token.encode("utf-8")).hexdigest(), 16) % self.dim
+                vec[h] += 1.0
+            norm = math.sqrt(sum(v * v for v in vec))
+            if norm > 0:
+                vec = [v / norm for v in vec]
+            return vec
+
+        # Fallback to char n-grams
         grams = self._ngrams(text)
         if not grams:
             return [0.0] * self.dim
@@ -161,10 +183,10 @@ class EmbeddingCache:
                             raise ValueError("truncated vector")
                         embeddings[key] = list(struct.unpack(f"<{dim}f", vec_bytes))
                     self._embeddings = embeddings
-                    logger.debug(f"Loaded {num_entries} embeddings from binary cache")
+                    logger.debug("Loaded %d embeddings from binary cache", num_entries)
                     return
             except (struct.error, ValueError, IOError) as e:
-                logger.debug(f"Binary cache load failed: {e}, trying JSON fallback")
+                logger.debug("Binary cache load failed: %s, trying JSON fallback", e)
 
         # Fall back to legacy JSON format
         if os.path.isfile(self._cache_path):
@@ -226,11 +248,11 @@ class EmbeddingCache:
             if key in self._embeddings:
                 self._embeddings.move_to_end(key)
                 return self._embeddings[key]
-            
+
             # Check cache size limit
             if len(self._embeddings) >= self._max_cache_size:
                 self._evict_old_entries()
-        
+
         vec = self._compute_embedding(text)
         with self._lock:
             if key not in self._embeddings:
@@ -245,7 +267,7 @@ class EmbeddingCache:
         evict_count = max(1, len(self._embeddings) // 5)
         for _ in range(evict_count):
             self._embeddings.popitem(last=False)
-        logger.debug(f"Evicted {evict_count} LRU cache entries")
+        logger.debug("Evicted %d LRU cache entries", evict_count)
 
     def embed_batch(self, texts: List[str]) -> List[List[float]]:
         """Get embeddings for multiple texts efficiently."""
@@ -335,6 +357,9 @@ class EmbeddingCache:
         """
         Simple agglomerative clustering by embedding similarity.
         Groups items with pairwise similarity > threshold.
+
+        v3.2: compares all pairs (removed i+30 limit) with
+        early exit for large datasets.
         """
         if not items:
             return []
@@ -358,12 +383,19 @@ class EmbeddingCache:
             if ra != rb:
                 parent[ra] = rb
 
-        # Compare pairs (optimize: only neighbors)
+        # Compare all pairs (optimized: skip already-unioned items)
+        max_pairs = min(n * (n - 1) // 2, 5000)  # cap for large datasets
+        pairs_checked = 0
         for i in range(n):
-            for j in range(i + 1, min(n, i + 30)):
+            for j in range(i + 1, n):
+                if pairs_checked >= max_pairs:
+                    break
                 sim = cosine_similarity(vecs[i], vecs[j])
                 if sim >= threshold:
                     union(i, j)
+                pairs_checked += 1
+            if pairs_checked >= max_pairs:
+                break
 
         # Build clusters
         clusters_map: Dict[int, List[int]] = {}
