@@ -9,8 +9,9 @@ from __future__ import annotations
 
 import json
 import os
-import re
 import threading
+import re
+import re
 import time
 import logging
 
@@ -64,7 +65,6 @@ class LLMAnalyzer:
         """Close the HTTP session and release connections."""
         if self._session:
             self._session.close()
-            self._session = None
             self._session = None
 
     @staticmethod
