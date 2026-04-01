@@ -223,7 +223,6 @@ class MemoryManager:
         self.embed_cache = EmbeddingCache({"cache_dir": cache_dir})
         self.collision_engine.set_embed_cache(self.embed_cache)
         self.consolidation.set_embed_cache(self.embed_cache)
-        self.consolidation.set_embed_cache(self.embed_cache)
 
     @staticmethod
     def _apply_tier(cfg: Dict[str, Any], tier: str) -> Dict[str, Any]:
@@ -246,7 +245,6 @@ class MemoryManager:
         candidates = [
             "config.json",
             os.path.join(os.path.dirname(__file__), "..", "config.json"),
-            os.path.join(os.path.dirname(__file__), "..", "..", "hms", "config.json"),
         ]
         for p in candidates:
             if os.path.isfile(p):
@@ -584,7 +582,7 @@ class MemoryManager:
 def main():
     """CLI entry point for hook/cron integration."""
     if len(sys.argv) < 2:
-        print("Usage: python -m hms.scripts.memory_manager <command> [--tier 32k|128k|256k|1M]")
+        print("Usage: python -m hms <command> [--tier 32k|128k|256k|1M]")
         print("Commands: received, process_pending, consolidate, forget")
         sys.exit(1)
 
