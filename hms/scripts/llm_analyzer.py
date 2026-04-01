@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 import time
 import logging
 
@@ -30,6 +31,8 @@ class LLMAnalyzer:
 
     _PROMPTS_DIR = Path(__file__).parent.parent / "prompts"
     _env_loaded = False
+    _env_lock = threading.Lock()
+    _env_lock = threading.Lock()
 
     def __init__(self, config: Optional[Dict[str, Any]] = None) -> None:
         self.cfg = config or {}
@@ -39,20 +42,28 @@ class LLMAnalyzer:
         self._call_count = 0
         self._token_count = 0
         self._budget = self.cfg.get("llm_budget_tokens_per_day", 50000)
-        self._budget_reset = time.time()
+        self._budget_reset = self._midnight_utc()
 
         # Gateway configuration
         self._gateway_url = self.cfg.get("gateway_url", "http://127.0.0.1:3578")
 
-        # Load .env file if not already loaded
+        # Load .env file if not already loaded (thread-safe)
         if not LLMAnalyzer._env_loaded:
-            LLMAnalyzer._load_env()
+            with LLMAnalyzer._env_lock:
+                if not LLMAnalyzer._env_loaded:
+                    LLMAnalyzer._load_env()
 
         # Circuit breaker state
         self._consecutive_failures = 0
         self._circuit_open_until = 0.0
         self._circuit_failure_threshold = 5
         self._circuit_cooldown_seconds = 300  # 5 minutes
+
+    @staticmethod
+    def _midnight_utc() -> float:
+        """Return the Unix timestamp for the most recent midnight UTC."""
+        now = time.time()
+        return now - (now % 86400)
 
     @classmethod
     def _load_env(cls) -> None:
@@ -85,7 +96,7 @@ class LLMAnalyzer:
         if time.time() - self._budget_reset > 86400:
             self._call_count = 0
             self._token_count = 0
-            self._budget_reset = time.time()
+            self._budget_reset = self._midnight_utc()
 
         if self._token_count >= self._budget:
             return None  # budget exhausted

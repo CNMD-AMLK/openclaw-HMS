@@ -29,6 +29,12 @@ def get_manager() -> MemoryManager:
     return _manager
 
 
+def reset_manager() -> None:
+    """Reset the global MemoryManager instance (e.g. for testing or reconfiguration)."""
+    global _manager
+    _manager = None
+
+
 def on_message_received(user_message: str, session_id: str = "") -> Dict[str, Any]:
     """
     Hook: Called when a user message is received.

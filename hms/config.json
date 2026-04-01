@@ -1,5 +1,5 @@
 {
-  "_comment": "HMS v2 Configuration — Multi-tier context window support",
+  "_comment": "HMS v3 Configuration — Multi-tier context window support",
 
   "importance_threshold": 6,
   "retrieval_top_k": 30,
@@ -55,13 +55,13 @@
       "model_context_window": 32000,
       "context_budget": {
         "system_prompt": 2000,
-        "cognitive_fingerprint_ratio": 0.03,
-        "topic_timelines_ratio": 0.05,
-        "compressed_summaries_ratio": 0.10,
-        "injected_memories_ratio": 0.12,
-        "recent_turns_ratio": 0.30,
+        "cognitive_fingerprint_ratio": 0.05,
+        "topic_timelines_ratio": 0.08,
+        "compressed_summaries_ratio": 0.13,
+        "injected_memories_ratio": 0.15,
+        "recent_turns_ratio": 0.34,
         "response_reserve_ratio": 0.15,
-        "buffer_ratio": 0.05
+        "buffer_ratio": 0.10
       },
       "retrieval_top_k": 8,
       "working_memory_recent_turns": 20,
@@ -73,13 +73,13 @@
       "model_context_window": 128000,
       "context_budget": {
         "system_prompt": 3000,
-        "cognitive_fingerprint_ratio": 0.02,
-        "topic_timelines_ratio": 0.04,
-        "compressed_summaries_ratio": 0.07,
-        "injected_memories_ratio": 0.13,
-        "recent_turns_ratio": 0.33,
+        "cognitive_fingerprint_ratio": 0.03,
+        "topic_timelines_ratio": 0.05,
+        "compressed_summaries_ratio": 0.08,
+        "injected_memories_ratio": 0.15,
+        "recent_turns_ratio": 0.38,
         "response_reserve_ratio": 0.15,
-        "buffer_ratio": 0.06
+        "buffer_ratio": 0.11
       },
       "retrieval_top_k": 15,
       "working_memory_recent_turns": 40,

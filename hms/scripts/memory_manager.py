@@ -1,5 +1,5 @@
 """
-HMS v2 — Unified Memory Manager.
+HMS v3 — Unified Memory Manager.
 
 Orchestrates the full cognitive memory pipeline:
   perception → collision → storage → consolidation → compression → fingerprint
@@ -116,13 +116,12 @@ class MemoryAdapter:
         fn = self._tools.get("memory_forget")
         if fn:
             return fn(memory_id=memory_id)
-        # Last resort: soft-delete via store with importance=0
+        # Last resort: soft-delete via update with importance=0
         try:
-            return self._call_gateway_api("/api/tools/memory-store", {
-                "text": "",
-                "category": "",
+            return self._call_gateway_api("/api/tools/memory-update", {
+                "memory_id": memory_id,
                 "importance": 0,
-                "metadata": json.dumps({"action": "forget", "memory_id": memory_id}),
+                "metadata": json.dumps({"action": "soft_delete", "original_id": memory_id}),
             })
         except Exception as e:
             logger.debug(f"Soft-delete forget failed: {e}")

@@ -556,7 +556,8 @@ def _test_mm_forget():
 def _test_mm_tier():
     from hms.scripts.memory_manager import MemoryManager
     import json
-    with open("hms/config.json") as f:
+    config_path = os.path.join(os.path.dirname(__file__), "..", "config.json")
+    with open(config_path) as f:
         base_cfg = json.load(f)
     for tier in ["32k", "128k", "256k", "1M"]:
         cfg = MemoryManager._apply_tier(dict(base_cfg), tier)

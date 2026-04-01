@@ -19,7 +19,7 @@ import math
 import os
 import re
 import logging
-from collections import Counter
+from collections import OrderedDict
 from typing import Any, Dict, List, Optional, Tuple
 
 from .file_utils import file_lock, atomic_write_json
@@ -109,9 +109,9 @@ class EmbeddingCache:
         self.cfg = config or {}
         self._cache_dir = self.cfg.get("cache_dir", "cache")
         self._cache_path = os.path.join(self._cache_dir, "embedding_cache.json")
-        self._embeddings: Dict[str, List[float]] = {}
+        self._embeddings: OrderedDict[str, List[float]] = OrderedDict()
         self._dirty = False
-        self._max_cache_size = self.cfg.get("max_cache_size", 10000)  # 限制缓存大小
+        self._max_cache_size = self.cfg.get("max_cache_size", 10000)
 
         # Init encoder
         self._encoder_type = "char_ngram"
@@ -163,6 +163,7 @@ class EmbeddingCache:
         """Get embedding for text, using cache if available."""
         key = self._text_key(text)
         if key in self._embeddings:
+            self._embeddings.move_to_end(key)
             return self._embeddings[key]
         
         # Check cache size limit
@@ -175,15 +176,13 @@ class EmbeddingCache:
         return vec
 
     def _evict_old_entries(self) -> None:
-        """Evict oldest 20% of cache entries when limit is reached."""
+        """Evict least recently used 20% of cache entries when limit is reached."""
         if not self._embeddings:
             return
-        # Simple eviction: remove first 20% (dict maintains insertion order in Python 3.7+)
         evict_count = max(1, len(self._embeddings) // 5)
-        keys_to_remove = list(self._embeddings.keys())[:evict_count]
-        for key in keys_to_remove:
-            del self._embeddings[key]
-        logger.debug(f"Evicted {evict_count} cache entries")
+        for _ in range(evict_count):
+            self._embeddings.popitem(last=False)
+        logger.debug(f"Evicted {evict_count} LRU cache entries")
 
     def embed_batch(self, texts: List[str]) -> List[List[float]]:
         """Get embeddings for multiple texts efficiently."""

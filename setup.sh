@@ -1,6 +1,6 @@
 #!/bin/bash
 # ============================================================================
-# HMS v2 Setup Script — Hierarchical Memory Scaffold (LLM-driven)
+# HMS v3 Setup Script — Hierarchical Memory Scaffold (LLM-driven)
 #
 # Usage: bash setup.sh
 # ============================================================================
@@ -11,7 +11,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HMS_DIR="${SCRIPT_DIR}/hms"
 
 echo "============================================"
-echo "HMS v2 Setup — LLM-driven Cognitive Memory"
+echo "HMS v3 Setup — LLM-driven Cognitive Memory"
 echo "============================================"
 echo ""
 
@@ -108,7 +108,7 @@ echo "============================================"
 echo "OpenClaw Integration Commands"
 echo "============================================"
 echo ""
-echo "Run these commands to register HMS v2 with OpenClaw:"
+echo "Run these commands to register HMS v3 with OpenClaw:"
 echo ""
 echo "# Register hooks"
 echo 'openclaw hook register message:received "python3 '"${HMS_DIR}"'/scripts/memory_manager.py received"'
@@ -119,7 +119,7 @@ echo 'openclaw cron add "0 3 * * *" "python3 '"${HMS_DIR}"'/scripts/memory_manag
 echo 'openclaw cron add "0 4 * * 0" "python3 '"${HMS_DIR}"'/scripts/memory_manager.py forget"'
 echo ""
 echo "============================================"
-echo "v2 Key Features"
+echo "v3 Key Features"
 echo "============================================"
 echo ""
 echo "  • LLM-driven perception (replaces dictionary-based)"

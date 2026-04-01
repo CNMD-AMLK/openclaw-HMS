@@ -1,0 +1,7 @@
+# HMS v3 — Hierarchical Memory Scaffold
+# Core dependencies
+requests>=2.28.0
+
+# Optional: high-quality embeddings (recommended)
+# sentence-transformers>=2.2.0
+# numpy>=1.21.0

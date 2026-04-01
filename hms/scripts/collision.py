@@ -121,8 +121,19 @@ class CollisionEngine:
                 continue
 
             # Simple negation detection
-            new_neg = any(w in new_text for w in ["不", "没", "无", "非"])
-            mem_neg = any(w in mem_text for w in ["不", "没", "无", "非"])
+            negation_words = [
+                "不", "没", "无", "非", "未", "否", "别", "莫", "勿",
+                "never", "not", "no", "neither", "nor", "n't",
+                "without", "cannot", "can't", "don't", "doesn't", "didn't",
+                "won't", "wouldn't", "shouldn't", "couldn't", "isn't", "aren't",
+                "wasn't", "weren't", "haven't", "hasn't", "hadn't",
+            ]
+            contradiction_patterns = [
+                "但是", "然而", "却", "反而", "相反", "其实", "实际上",
+                "but", "however", "actually", "instead", "contrary",
+            ]
+            new_neg = any(w in new_text for w in negation_words) or any(p in new_text for p in contradiction_patterns)
+            mem_neg = any(w in mem_text for w in negation_words) or any(p in mem_text for p in contradiction_patterns)
 
             if new_neg != mem_neg:
                 # Potential contradiction

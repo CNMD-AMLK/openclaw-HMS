@@ -169,7 +169,7 @@ class ConsolidationEngine:
 
     @staticmethod
     def _fallback_compress(conversations: List[Dict[str, str]]) -> Dict[str, Any]:
-        """Simple fallback compression without LLM. Now properly extracts topics and entities."""
+        """Simple fallback compression without LLM. Uses keyword extraction for topics/entities."""
         all_topics: set[str] = set()
         all_entities: set[str] = set()
         summaries: list[str] = []
@@ -193,6 +193,9 @@ class ConsolidationEngine:
             "学习": ["学习", "教程", "文档", "怎么", "如何", "为什么"],
             "项目": ["项目", "任务", "需求", "功能", "版本", "发布"],
             "工具": ["工具", "软件", "插件", "扩展", "配置"],
+            "生活": ["吃饭", "睡觉", "运动", "旅行", "购物", "电影", "音乐", "游戏"],
+            "工作": ["工作", "会议", "面试", "薪水", "老板", "同事", "加班"],
+            "技术": ["算法", "架构", "设计", "测试", "部署", "数据库", "API", "前端", "后端"],
         }
 
         decision_markers = ["决定", "选择", "确认", "用", "采用", "就用这个"]
