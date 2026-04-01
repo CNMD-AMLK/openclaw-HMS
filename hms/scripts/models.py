@@ -1,5 +1,5 @@
 """
-HMS v3 — Shared data models.
+HMS v3.1 — Shared data models.
 
 Extends v1 models with cognitive fingerprint and topic timeline support.
 Uses only Python standard library.
@@ -192,10 +192,14 @@ class DecayState:
             current_time = current_time.replace(tzinfo=timezone.utc)
         hours_elapsed = max(0.0, (current_time - last).total_seconds() / 3600.0)
         time_factor = math.exp(-0.693147 * hours_elapsed / half_life_hours)
-        emo_mult = 1.0 + self.emotional_arousal * emotion_slowdown
-        rein_mult = 1.0 + self.times_reinforced * reinforcement_weight
-        conf_mult = 1.0 + self.belief_confidence * 0.5
-        rel_mult = 1.0 + self.related_count * 0.05
+
+        # FIX: cap multipliers to prevent unbounded strength
+        # This ensures the forgetting mechanism actually works for frequently accessed memories
+        emo_mult = 1.0 + min(self.emotional_arousal, 1.0) * min(emotion_slowdown, 2.0)
+        rein_mult = 1.0 + min(self.times_reinforced, 3) * reinforcement_weight
+        conf_mult = 1.0 + min(self.belief_confidence, 1.0) * 0.5
+        rel_mult = 1.0 + min(self.related_count, 6) * 0.05
+
         strength = self.importance * emo_mult * rein_mult * conf_mult * rel_mult * time_factor
         return round(max(0.0, strength), 4)
 
@@ -347,6 +351,22 @@ def _self_test():
     assert len(tl.entries) == 1
     assert tl.total_entries_merged == 1
     print(f"[Timeline] entries={len(tl.entries)} merged={tl.total_entries_merged}")
+
+    # Test capped strength calculation
+    ds = DecayState(
+        memory_id="test",
+        last_accessed=now.isoformat(),
+        times_reinforced=100,
+        related_count=50,
+        emotional_arousal=1.0,
+        belief_confidence=1.0,
+        importance=10.0,
+    )
+    strength = ds.calculate_strength(now)
+    # With caps: emo_mult<=3, rein_mult<=1.45, conf_mult<=1.5, rel_mult<=1.3
+    # strength = 10 * 3 * 1.45 * 1.5 * 1.3 * 1.0 = 84.825 (bounded, not thousands)
+    assert strength < 100, f"Strength should be capped, got {strength}"
+    print(f"[Strength capped] OK, strength={strength}")
 
     print("✓ All self-tests passed.")
 

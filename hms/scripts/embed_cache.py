@@ -186,7 +186,11 @@ class EmbeddingCache:
         if not self._dirty:
             return
         with file_lock(self._cache_bin_path):
-            dim = 256  # fixed dimension for all embeddings
+            # FIX: use actual encoder dimension instead of hardcoded 256
+            if self._st_model is not None:
+                dim = self._st_model.get_sentence_embedding_dimension()
+            else:
+                dim = self._char_encoder.dim
             with open(self._cache_bin_path, "wb") as f:
                 f.write(struct.pack("<II", len(self._embeddings), dim))
                 for key, vec in self._embeddings.items():
@@ -212,7 +216,8 @@ class EmbeddingCache:
 
     def _text_key(self, text: str) -> str:
         """Generate a cache key for text."""
-        return hashlib.md5(text.encode("utf-8")).hexdigest()
+        # FIX: use SHA-256 instead of MD5 to avoid collision risk
+        return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
     def embed(self, text: str) -> List[float]:
         """Get embedding for text, using cache if available."""
@@ -278,6 +283,16 @@ class EmbeddingCache:
                         if key not in self._embeddings:
                             self._embeddings[key] = v
                             self._dirty = True
+
+            # FIX: enforce cache size limit after batch add
+            with self._lock:
+                if len(self._embeddings) > self._max_cache_size:
+                    self._evict_old_entries()
+
+            # FIX: enforce cache size limit after batch add
+            with self._lock:
+                if len(self._embeddings) > self._max_cache_size:
+                    self._evict_old_entries()
 
         return results
 

@@ -13,6 +13,7 @@ import re
 import threading
 import time
 import logging
+from datetime import datetime, timezone
 
 import requests
 from pathlib import Path
@@ -72,9 +73,25 @@ class LLMAnalyzer:
         now = time.time()
         return now - (now % 86400)
 
+    # FIX: whitelist of allowed env keys to prevent malicious overrides
+    _ALLOWED_ENV_KEYS = {
+        "OPENCLAW_GATEWAY_URL",
+        "OPENAI_API_KEY",
+        "HMS_LLM_MODEL",
+        "HMS_GATEWAY_URL",
+    }
+
+    # FIX: whitelist of allowed env keys to prevent malicious overrides
+    _ALLOWED_ENV_KEYS = {
+        "OPENCLAW_GATEWAY_URL",
+        "OPENAI_API_KEY",
+        "HMS_LLM_MODEL",
+        "HMS_GATEWAY_URL",
+    }
+
     @classmethod
     def _load_env(cls) -> None:
-        """Load .env file if exists."""
+        """Load .env file if exists, with whitelist protection."""
         env_path = Path(__file__).parent.parent.parent / ".env"
         if env_path.exists():
             with open(env_path, encoding="utf-8") as f:
@@ -82,7 +99,10 @@ class LLMAnalyzer:
                     line = line.strip()
                     if line and not line.startswith("#") and "=" in line:
                         key, val = line.split("=", 1)
-                        os.environ.setdefault(key, val)
+                        key = key.strip()
+                        # FIX: only load whitelisted or HMS_ prefixed keys
+                        if key in cls._ALLOWED_ENV_KEYS or key.startswith("HMS_"):
+                            os.environ.setdefault(key, val.strip())
             cls._env_loaded = True
 
     # ==================================================================
@@ -99,11 +119,12 @@ class LLMAnalyzer:
         Call the current OpenClaw model via Gateway with exponential backoff,
         error classification, and circuit breaker.
         """
-        # Budget check
-        if time.time() - self._budget_reset > 86400:
+        # Budget check — FIX: use date-based reset instead of time-delta
+        today = datetime.now(timezone.utc).date()
+        if not hasattr(self, "_budget_date") or self._budget_date != today:
             self._call_count = 0
             self._token_count = 0
-            self._budget_reset = self._midnight_utc()
+            self._budget_date = today
 
         if self._token_count >= self._budget:
             return None  # budget exhausted

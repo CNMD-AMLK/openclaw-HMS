@@ -1,5 +1,5 @@
 {
-  "_comment": "HMS v3 Configuration — Multi-tier context window support",
+  "_comment": "HMS v3.1 Configuration — Multi-tier context window support",
 
   "cache_dir": "cache",
 
@@ -45,9 +45,12 @@
   "timeline_update_interval_hours": 24,
   "timeline_max_topics": 20,
   "timeline_max_entries_per_topic": 10,
+  "timeline_max_summary_len": 1000,
 
   "fingerprint_update_interval_hours": 12,
   "fingerprint_max_tokens": 4000,
+
+  "max_compression_history": 200,
 
   "_comment_context": "=== Context Window Tiers ===",
   "_comment_tiers": "32k=low, 128k=mid, 256k=default, 1M=ultra",

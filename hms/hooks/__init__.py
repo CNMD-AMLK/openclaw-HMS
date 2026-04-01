@@ -26,6 +26,7 @@ import atexit
 import json
 import logging
 import sys
+import threading
 from typing import Any, Dict, Optional
 
 from ..scripts.memory_manager import MemoryManager
@@ -43,6 +44,8 @@ __all__ = [
 logger = logging.getLogger(__name__)
 
 _manager: Optional[MemoryManager] = None
+_manager_lock = threading.Lock()
+_manager_lock = threading.Lock()
 
 
 def _cleanup() -> None:
@@ -60,10 +63,12 @@ atexit.register(_cleanup)
 
 
 def get_manager() -> MemoryManager:
-    """Get or create the global MemoryManager instance."""
+    """Get or create the global MemoryManager instance (thread-safe)."""
     global _manager
     if _manager is None:
-        _manager = MemoryManager()
+        with _manager_lock:
+            if _manager is None:
+                _manager = MemoryManager()
     return _manager
 
 

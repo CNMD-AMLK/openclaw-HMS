@@ -99,7 +99,8 @@ class ForgettingEngine:
     def flush(self) -> None:
         """Persist decay state to disk if dirty."""
         if self._dirty:
-            self.save_decay_state()
+            with file_lock(self._cache_path):
+                atomic_write_json(self._cache_path, self._states)
             self._dirty = False
 
     # ==================================================================

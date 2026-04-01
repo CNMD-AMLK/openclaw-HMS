@@ -121,7 +121,9 @@ class CollisionEngine:
             "反感", "不爽",
         }
         negation_words = [
-            "不", "没", "无", "非", "未", "否", "别", "莫", "勿",
+            "不", "没", "无", "非", "未", "否", "别", "莫", "勿", "休",
+            "从未", "不曾", "没有", "毫无", "绝不", "切勿", "难以", "无法",
+            "缺乏", "不足", "不再", "并非", "并不是",
             "never", "not", "no", "neither", "nor", "n't",
             "without", "cannot", "can't", "don't", "doesn't", "didn't",
             "won't", "wouldn't", "shouldn't", "couldn't", "isn't", "aren't",
@@ -191,6 +193,7 @@ class CollisionEngine:
         collision_result: Dict[str, Any],
         memory_store_func: Optional[Callable] = None,
         gm_record_func: Optional[Callable] = None,
+        new_memory_id: str = "",
     ) -> Dict[str, Any]:
         """
         Execute collision results: store inferences, record graph edges.
@@ -219,13 +222,14 @@ class CollisionEngine:
                 except Exception as e:
                     report["errors"].append(f"inference_store: {e}")
 
-        # Record associations as graph edges
+        # FIX: use actual new_memory_id instead of hardcoded "new_perception"
+        target_id = new_memory_id or "new_perception"
         for assoc in collision_result.get("associations", []):
             if gm_record_func and assoc.get("confidence", 0) >= 0.5:
                 try:
                     gm_record_func(
                         source=assoc.get("existing_id", ""),
-                        target="new_perception",
+                        target=target_id,
                         relation=assoc.get("relation_type", "related"),
                         context=assoc.get("reason", ""),
                     )

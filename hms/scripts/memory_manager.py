@@ -1,5 +1,5 @@
 """
-HMS v3 — Unified Memory Manager.
+HMS v3.1 — Unified Memory Manager.
 
 Orchestrates the full cognitive memory pipeline:
   perception → collision → storage → consolidation → compression → fingerprint
@@ -108,6 +108,13 @@ class MemoryAdapter:
         return [m for m in memories if m.get("importance", 1) > 0]
 
     def update(self, memory_id: str, **kwargs: Any) -> Any:
+        """Update a memory. Tries Gateway API first, falls back to injected tool."""
+        # FIX: try Gateway API first (was missing entirely)
+        try:
+            payload = {"memory_id": memory_id, **kwargs}
+            return self._call_gateway_api("/api/tools/memory-update", payload)
+        except Exception as e:
+            logger.debug(f"Gateway update failed: {e}")
         fn = self._tools.get("memory_update")
         kwargs["memory_id"] = memory_id
         if fn:
@@ -523,11 +530,22 @@ class MemoryManager:
         Weekly forgetting pass.
         Evaluate all memories and forget weak ones.
         """
-        try:
-            all_memories = self.adapter.recall(query="所有记忆", top_k=500) or []
-        except Exception as e:
-            logger.debug(f"Memory recall for forget failed: {e}")
-            all_memories = []
+        # FIX: use multiple broad queries instead of a single meaningless one
+        # to cover more memories for evaluation
+        broad_queries = ["", "记忆", "用户", "项目", "工作", "学习", "生活", "技术"]
+        all_memories: List[Dict[str, Any]] = []
+        seen_ids = set()
+
+        for q in broad_queries:
+            try:
+                memories = self.adapter.recall(query=q, top_k=100) or []
+                for m in memories:
+                    mid = m.get("id", "")
+                    if mid and mid not in seen_ids:
+                        all_memories.append(m)
+                        seen_ids.add(mid)
+            except Exception as e:
+                logger.debug(f"Memory recall for forget failed with query '{q}': {e}")
 
         evaluation = self.forgetting.evaluate_all(all_memories)
 
@@ -542,6 +560,54 @@ class MemoryManager:
             "kept": len(evaluation["to_keep"]),
             "forget_ratio": evaluation["report"]["forget_ratio"],
         }
+
+    # ==================================================================
+    # Health check
+    # ==================================================================
+
+    def health_check(self) -> Dict[str, Any]:
+        """System health status check."""
+        import sys
+        import time
+
+        status = {
+            "version": "3.1.0",
+            "python": sys.version,
+            "components": {},
+        }
+
+        # LLM availability
+        try:
+            test = self.perception.llm._call_llm("ping", max_tokens=5)
+            status["components"]["llm"] = "ok" if test else "degraded"
+        except Exception as e:
+            status["components"]["llm"] = f"error: {e}"
+
+        # Embedding availability
+        try:
+            if self.embed_cache:
+                enc_type = self.embed_cache._encoder_type
+                status["components"]["embedding"] = f"ok ({enc_type})"
+            else:
+                status["components"]["embedding"] = "not_initialized"
+        except Exception as e:
+            status["components"]["embedding"] = f"error: {e}"
+
+        # Storage state
+        status["components"]["storage"] = {
+            "pending_count": self.context.get_pending_count(),
+            "fingerprint_version": self.context._fingerprint.get("version", 0),
+            "timeline_topics": len(self.context._timelines),
+            "compression_history": len(self.context._compression_history),
+        }
+
+        # Circuit breaker
+        status["components"]["circuit_breaker"] = {
+            "failures": self.perception.llm._consecutive_failures,
+            "open": time.time() < self.perception.llm._circuit_open_until,
+        }
+
+        return status
 
     def close(self) -> None:
         """Close all resources (HTTP sessions, file descriptors)."""
@@ -583,7 +649,7 @@ def main():
     """CLI entry point for hook/cron integration."""
     if len(sys.argv) < 2:
         print("Usage: python -m hms <command> [--tier 32k|128k|256k|1M]")
-        print("Commands: received, process_pending, consolidate, forget")
+        print("Commands: received, process_pending, consolidate, forget, status")
         sys.exit(1)
 
     command = sys.argv[1]
@@ -619,6 +685,10 @@ def main():
     elif command == "forget":
         result = mgr.forget()
         print(json.dumps(result, ensure_ascii=False, indent=2))
+
+    elif command == "status":
+        health = mgr.health_check()
+        print(json.dumps(health, ensure_ascii=False, indent=2))
 
     else:
         print(f"Unknown command: {command}")
