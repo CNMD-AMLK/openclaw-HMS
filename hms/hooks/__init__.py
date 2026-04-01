@@ -22,6 +22,7 @@ Instead, HMS integrates through:
 
 from __future__ import annotations
 
+import atexit
 import json
 import logging
 import sys
@@ -42,6 +43,20 @@ __all__ = [
 logger = logging.getLogger(__name__)
 
 _manager: Optional[MemoryManager] = None
+
+
+def _cleanup() -> None:
+    """Clean up resources on process exit."""
+    global _manager
+    if _manager is not None:
+        try:
+            _manager.close()
+        except Exception:
+            pass
+        _manager = None
+
+
+atexit.register(_cleanup)
 
 
 def get_manager() -> MemoryManager:

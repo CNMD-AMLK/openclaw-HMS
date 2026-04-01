@@ -24,7 +24,7 @@ from collections import OrderedDict
 from typing import Any, Dict, List, Optional, Tuple
 import threading
 
-from .file_utils import file_lock, atomic_write_json
+from .file_utils import file_lock
 
 logger = logging.getLogger(__name__)
 
@@ -185,7 +185,7 @@ class EmbeddingCache:
         """
         if not self._dirty:
             return
-        with file_lock(self._cache_path):
+        with file_lock(self._cache_bin_path):
             dim = 256  # fixed dimension for all embeddings
             with open(self._cache_bin_path, "wb") as f:
                 f.write(struct.pack("<II", len(self._embeddings), dim))

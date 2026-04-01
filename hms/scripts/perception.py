@@ -7,8 +7,7 @@ Replaces v1's dictionary-based approach entirely.
 
 from __future__ import annotations
 
-import json
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 from .llm_analyzer import LLMAnalyzer
 
@@ -34,27 +33,28 @@ class PerceptionEngine:
         Analyze a conversation turn.
 
         Modes:
-          - "full": always try LLM, fallback to heuristic
+          - "full": try LLM first, fallback to heuristic on failure
           - "lite": heuristic only (for high-throughput / sync path)
-          - "llm_only": LLM only, return None-like on failure
+          - "llm_only": LLM only, return minimal dict on failure
         """
-        if self._mode == "lite" and not force_llm:
-            result = self.llm.fallback_perceive(user_message, assistant_reply)
-            result["analysis_method"] = "heuristic"
-            result["text_for_store"] = self._build_store_text(
-                user_message, assistant_reply, result
-            )
-            return result
+        if self._mode == "lite":
+            return self._heuristic_result(user_message, assistant_reply)
 
-        if not force_llm:
-            result = self.llm.fallback_perceive(user_message, assistant_reply)
-            result["analysis_method"] = "heuristic"
-            result["text_for_store"] = self._build_store_text(
-                user_message, assistant_reply, result
-            )
-            return result
+        if self._mode == "llm_only" or force_llm:
+            result = self.llm.perceive(user_message, assistant_reply)
+            if result:
+                result["analysis_method"] = "llm"
+                result["text_for_store"] = self._build_store_text(
+                    user_message, assistant_reply, result
+                )
+                return result
+            return {
+                "should_remember": False,
+                "analysis_method": "failed",
+                "text_for_store": user_message,
+            }
 
-        # LLM-only path (async / process_pending)
+        # "full" mode: try LLM, fallback to heuristic
         result = self.llm.perceive(user_message, assistant_reply)
         if result:
             result["analysis_method"] = "llm"
@@ -63,11 +63,18 @@ class PerceptionEngine:
             )
             return result
 
-        return {
-            "should_remember": False,
-            "analysis_method": "failed",
-            "text_for_store": user_message,
-        }
+        return self._heuristic_result(user_message, assistant_reply)
+
+    def _heuristic_result(
+        self, user_message: str, assistant_reply: str = ""
+    ) -> Dict[str, Any]:
+        """Build and return a heuristic analysis result."""
+        result = self.llm.fallback_perceive(user_message, assistant_reply)
+        result["analysis_method"] = "heuristic"
+        result["text_for_store"] = self._build_store_text(
+            user_message, assistant_reply, result
+        )
+        return result
 
     @staticmethod
     def _build_store_text(

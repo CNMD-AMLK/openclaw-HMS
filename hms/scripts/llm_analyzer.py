@@ -64,6 +64,8 @@ class LLMAnalyzer:
         """Close the HTTP session and release connections."""
         if self._session:
             self._session.close()
+            self._session = None
+            self._session = None
 
     @staticmethod
     def _midnight_utc() -> float:

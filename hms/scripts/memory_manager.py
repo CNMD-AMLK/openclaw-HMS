@@ -546,12 +546,27 @@ class MemoryManager:
 
     def close(self) -> None:
         """Close all resources (HTTP sessions, file descriptors)."""
-        self.adapter.close()
-        self.perception.llm.close()
-        self.collision_engine.llm.close()
-        self.consolidation.llm.close()
-        from .file_utils import close_all_lock_fds
-        close_all_lock_fds()
+        try:
+            self.adapter.close()
+        except Exception:
+            pass
+        try:
+            self.perception.llm.close()
+        except Exception:
+            pass
+        try:
+            self.collision_engine.llm.close()
+        except Exception:
+            pass
+        try:
+            self.consolidation.llm.close()
+        except Exception:
+            pass
+        try:
+            from .file_utils import close_all_lock_fds
+            close_all_lock_fds()
+        except Exception:
+            pass
 
     def __enter__(self) -> "MemoryManager":
         return self
