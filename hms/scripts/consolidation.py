@@ -8,12 +8,15 @@ Replaces v1's frequency-based clustering with semantic understanding.
 from __future__ import annotations
 
 import json
+import logging
 import os
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Optional
 
 from .llm_analyzer import LLMAnalyzer
 from .embed_cache import EmbeddingCache
+
+logger = logging.getLogger(__name__)
 
 
 class ConsolidationEngine:
@@ -59,7 +62,7 @@ class ConsolidationEngine:
                     if t.tzinfo is None:
                         t = t.replace(tzinfo=timezone.utc)
                     age_h = max(0.0, (now - t).total_seconds() / 3600.0)
-                except Exception:
+                except (ValueError, TypeError):
                     age_h = 72.0
             else:
                 age_h = 72.0
@@ -420,8 +423,8 @@ class ConsolidationEngine:
                     context=json.dumps(rel.get("shared", []), ensure_ascii=False),
                 )
                 created += 1
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"Graph record failed: {e}")
         return created
 
 

@@ -10,6 +10,7 @@ Three-layer architecture for infinite context.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import sys
 from datetime import datetime, timezone
@@ -23,6 +24,8 @@ from .context_manager import ContextManager
 from .consolidation import ConsolidationEngine
 from .forgetting import ForgettingEngine
 from .embed_cache import EmbeddingCache
+
+logger = logging.getLogger(__name__)
 
 
 # ======================================================================
@@ -63,10 +66,11 @@ class MemoryAdapter:
                 "importance": importance,
                 "metadata": metadata,
             })
-        except Exception:
+        except Exception as e:
             fn = self._tools.get("memory_store")
             if fn:
                 return fn(text=text, category=category, importance=importance, metadata=metadata)
+            logger.debug(f"Gateway store failed, using stub: {e}")
             return {"status": "stubbed", "text": text[:40]}
 
     def recall(self, query: str, top_k: int = 5, category: Optional[str] = None) -> List[Dict[str, Any]]:
@@ -78,11 +82,12 @@ class MemoryAdapter:
             })
             memories = result if isinstance(result, list) else []
             return self._filter_forgotten(memories)
-        except Exception:
+        except Exception as e:
             fn = self._tools.get("memory_recall")
             if fn:
                 memories = fn(query=query, top_k=top_k, category=category) or []
                 return self._filter_forgotten(memories)
+            logger.debug(f"Gateway recall failed: {e}")
             return []
 
     @staticmethod
@@ -105,8 +110,8 @@ class MemoryAdapter:
                 "memory_id": memory_id,
             })
             return result
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"Gateway forget failed: {e}")
         # Try injected tool
         fn = self._tools.get("memory_forget")
         if fn:
@@ -119,7 +124,8 @@ class MemoryAdapter:
                 "importance": 0,
                 "metadata": json.dumps({"action": "forget", "memory_id": memory_id}),
             })
-        except Exception:
+        except Exception as e:
+            logger.debug(f"Soft-delete forget failed: {e}")
             return {"status": "stubbed", "memory_id": memory_id}
 
     def graph_record(self, source: str, target: str, relation: str, context: str = "") -> Any:
@@ -130,10 +136,11 @@ class MemoryAdapter:
                 "relation": relation,
                 "context": context,
             })
-        except Exception:
+        except Exception as e:
             fn = self._tools.get("gm_record")
             if fn:
                 return fn(source=source, target=target, relation=relation, context=context)
+            logger.debug(f"Gateway gm-record failed: {e}")
             return {"status": "stubbed"}
 
     def graph_search(self, query: str, depth: int = 2) -> List[Dict[str, Any]]:
@@ -143,10 +150,11 @@ class MemoryAdapter:
                 "depth": depth,
             })
             return result if isinstance(result, list) else []
-        except Exception:
+        except Exception as e:
             fn = self._tools.get("gm_search")
             if fn:
                 return fn(query=query, depth=depth) or []
+            logger.debug(f"Gateway gm-search failed: {e}")
             return []
 
 
@@ -232,7 +240,8 @@ class MemoryManager:
                 try:
                     with open(p, "r", encoding="utf-8") as f:
                         return json.load(f)
-                except Exception:
+                except Exception as e:
+                    logger.debug(f"Config load failed for {p}: {e}")
                     continue
         return {}
 
@@ -453,7 +462,8 @@ class MemoryManager:
         # 4. Memory replay
         try:
             all_memories = self.adapter.recall(query="记忆回顾", top_k=100) or []
-        except Exception:
+        except Exception as e:
+            logger.debug(f"Memory recall for replay failed: {e}")
             all_memories = []
 
         if all_memories:
@@ -471,8 +481,8 @@ class MemoryManager:
                             memory_id=mid,
                             importance_delta=result.get("importance_adjustment", 0),
                         )
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.debug(f"Memory update failed for {mid}: {e}")
                     report["replayed"] += 1
 
         # 5. Relation discovery
@@ -503,7 +513,8 @@ class MemoryManager:
         """
         try:
             all_memories = self.adapter.recall(query="所有记忆", top_k=500) or []
-        except Exception:
+        except Exception as e:
+            logger.debug(f"Memory recall for forget failed: {e}")
             all_memories = []
 
         evaluation = self.forgetting.evaluate_all(all_memories)

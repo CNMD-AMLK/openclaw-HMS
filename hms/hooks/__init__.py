@@ -8,10 +8,13 @@ These hooks are called by OpenClaw at specific lifecycle points.
 from __future__ import annotations
 
 import json
+import logging
 import sys
 from typing import Any, Dict, Optional
 
 from ..scripts.memory_manager import MemoryManager
+
+logger = logging.getLogger(__name__)
 
 
 # Global instance (initialized on first use)

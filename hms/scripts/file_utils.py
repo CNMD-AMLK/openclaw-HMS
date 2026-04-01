@@ -44,7 +44,7 @@ def atomic_write_json(path: str, data: Any) -> None:
             json.dump(data, f, ensure_ascii=False, indent=2)
         os.replace(tmp_path, path)
     except BaseException:
-        # Clean up tmp file on failure
+        # Clean up tmp file on failure (catches BaseException to handle KeyboardInterrupt too)
         try:
             os.unlink(tmp_path)
         except OSError:

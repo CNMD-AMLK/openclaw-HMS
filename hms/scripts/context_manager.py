@@ -12,6 +12,7 @@ Plus dynamic token budget allocation.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 from datetime import datetime, timezone
@@ -26,6 +27,8 @@ from .file_utils import (
     file_lock,
 )
 from .utils import estimate_tokens
+
+logger = logging.getLogger(__name__)
 
 
 class ContextManager:
@@ -104,8 +107,9 @@ class ContextManager:
     def get_pending_count(self) -> int:
         if not os.path.isfile(self._pending_path):
             return 0
-        with open(self._pending_path, "r", encoding="utf-8") as f:
-            return sum(1 for line in f if line.strip())
+        with file_lock(self._pending_path):
+            with open(self._pending_path, "r", encoding="utf-8") as f:
+                return sum(1 for line in f if line.strip())
 
     # ==================================================================
     # Cognitive fingerprint
@@ -248,7 +252,8 @@ class ContextManager:
                         t = t.replace(tzinfo=timezone.utc)
                     if t.timestamp() >= cutoff:
                         result.append(s)
-                except Exception:
+                except ValueError:
+                    # Invalid date format, include it anyway
                     result.append(s)
             else:
                 result.append(s)

@@ -8,6 +8,7 @@ Optimized from v1 with better half-life scaling and immortal guards.
 from __future__ import annotations
 
 import json
+import logging
 import math
 import os
 from datetime import datetime, timezone
@@ -15,6 +16,8 @@ from typing import Any, Dict, List, Optional
 
 from .file_utils import atomic_write_json, safe_read_json, file_lock
 from .models import DecayState
+
+logger = logging.getLogger(__name__)
 
 
 class ForgettingEngine:
@@ -222,8 +225,8 @@ class ForgettingEngine:
                 memory_forget_func(mid)
                 self._states.pop(mid, None)
                 deleted += 1
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"Failed to forget memory {mid}: {e}")
         self.save_decay_state()
         return deleted
 
@@ -259,7 +262,7 @@ class ForgettingEngine:
         if isinstance(meta, str):
             try:
                 return json.loads(meta)
-            except Exception:
+            except (json.JSONDecodeError, ValueError):
                 return {}
         return {}
 
