@@ -65,27 +65,34 @@ class CharNGramEncoder:
         return grams
 
     def encode(self, text: str) -> List[float]:
-        """Encode text into a fixed-dim vector via hashed char n-grams.
+        """Encode text into a fixed-dim vector.
 
-        For Chinese text, uses jieba tokenization if available to
-        produce word-level features instead of raw char n-grams.
+        Uses jieba tokenization when available for Chinese text.
+        Falls back to char n-grams only when jieba is not available
+        and the text is ASCII-dominant.
         """
         if not text:
             return [0.0] * self.dim
 
-        # For Chinese text, use tokenized words as features
-        tokens = tokenize(text)
-        if tokens:
-            vec = [0.0] * self.dim
-            for token in tokens:
-                h = int(hashlib.md5(token.encode("utf-8")).hexdigest(), 16) % self.dim
-                vec[h] += 1.0
-            norm = math.sqrt(sum(v * v for v in vec))
-            if norm > 0:
-                vec = [v / norm for v in vec]
-            return vec
+        # Use jieba tokenization for Chinese text
+        cn_ratio = sum(1 for c in text if "\u4e00" <= c <= "\u9fff") / max(len(text), 1)
+        if cn_ratio > 0.1:
+            from .utils import _get_jieba
+            jieba = _get_jieba()
+            if jieba is not None:
+                tokens = jieba.lcut(text)
+                tokens = [w for w in tokens if w.strip()]
+                if tokens:
+                    vec = [0.0] * self.dim
+                    for token in tokens:
+                        h = int(hashlib.md5(token.encode("utf-8")).hexdigest(), 16) % self.dim
+                        vec[h] += 1.0
+                    norm = math.sqrt(sum(v * v for v in vec))
+                    if norm > 0:
+                        vec = [v / norm for v in vec]
+                    return vec
 
-        # Fallback to char n-grams
+        # Fallback to char n-grams for non-Chinese or no-jieba text
         grams = self._ngrams(text)
         if not grams:
             return [0.0] * self.dim

@@ -15,7 +15,7 @@ import json
 import logging
 import os
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 
 from .file_utils import (
     atomic_write_json,
@@ -48,6 +48,9 @@ class ContextManager:
         # Pending queue size limit
         self._max_pending = self.cfg.get("max_pending_size", 1000)
 
+        # Max summary length to prevent unbounded growth
+        self._max_summary_len = self.cfg.get("timeline_max_summary_len", 1000)
+
         # File paths for v2 structures
         self._fingerprint_path = os.path.join(
             self._cache_dir, "cognitive_fingerprint.json"
@@ -68,14 +71,23 @@ class ContextManager:
     # Persistence helpers
     # ==================================================================
 
-    def save_state(self) -> None:
-        """Persist all state to disk atomically with locks."""
-        with file_lock(self._fingerprint_path):
-            atomic_write_json(self._fingerprint_path, self._fingerprint)
-        with file_lock(self._timelines_path):
-            atomic_write_json(self._timelines_path, self._timelines)
-        with file_lock(self._compression_path):
-            atomic_write_json(self._compression_path, self._compression_history)
+    def save_state(self, changed: Optional[Set[str]] = None) -> None:
+        """Persist all state to disk atomically with locks.
+
+        Args:
+            changed: Optional set of changed keys ('fingerprint', 'timelines',
+                     'compression_history'). If None, saves all three.
+        """
+        all_keys = changed or {"fingerprint", "timelines", "compression_history"}
+        if "fingerprint" in all_keys:
+            with file_lock(self._fingerprint_path):
+                atomic_write_json(self._fingerprint_path, self._fingerprint)
+        if "timelines" in all_keys:
+            with file_lock(self._timelines_path):
+                atomic_write_json(self._timelines_path, self._timelines)
+        if "compression_history" in all_keys:
+            with file_lock(self._compression_path):
+                atomic_write_json(self._compression_path, self._compression_history)
 
     # ==================================================================
     # Pending queue
@@ -266,9 +278,13 @@ class ContextManager:
                     e.get("summary", "") for e in merge if e.get("summary")
                 ]
                 if merged_summaries:
-                    tl["summary"] = (
+                    new_summary = (
                         tl.get("summary", "") + " | ".join(merged_summaries)
                     ).strip()
+                    # Truncate to prevent unbounded growth
+                    if len(new_summary) > self._max_summary_len:
+                        new_summary = new_summary[: self._max_summary_len - 3] + "..."
+                    tl["summary"] = new_summary
                     tl["total_entries_merged"] = tl.get("total_entries_merged", 0) + len(
                         merge
                     )

@@ -15,6 +15,8 @@ import os
 import sys
 from typing import Any, Callable, Dict, List, Optional
 
+import threading
+
 import requests
 
 from .perception import PerceptionEngine
@@ -53,6 +55,8 @@ class MemoryAdapter:
 
         # Dedup threshold
         self._dedup_threshold = self.cfg.get("dedup_similarity_threshold", 0.95)
+        self._dedup_lock = threading.Lock()
+        self._dedup_lock = threading.Lock()
 
     def close(self) -> None:
         """Close the HTTP session and release connections."""
@@ -230,26 +234,46 @@ class MemoryAdapter:
 
         If a highly similar memory exists (above dedup_threshold),
         update the existing one instead of creating a new entry.
+        Uses a thread lock to prevent race conditions in concurrent scenarios.
         """
         if embed_cache is None:
             return self.store(text, category, importance, metadata)
 
-        # Search for similar existing memories
-        similar = self.recall(query=text, top_k=3)
-        for mem in similar:
-            existing_text = mem.get("text", "")
-            if not existing_text:
-                continue
-            sim = embed_cache.similarity(text, existing_text)
-            if sim >= self._dedup_threshold:
-                # Update existing memory instead of creating new one
-                logger.info(
-                    "Dedup: merging into existing memory %s (similarity=%.3f)",
-                    mem.get("id", ""), sim,
-                )
-                return self.update(mem["id"], importance=max(mem.get("importance", 0), importance))
+        with self._dedup_lock:
+            # Search for similar existing memories
+            similar = self.recall(query=text, top_k=3)
+            for mem in similar:
+                existing_text = mem.get("text", "")
+                if not existing_text:
+                    continue
+                sim = embed_cache.similarity(text, existing_text)
+                if sim >= self._dedup_threshold:
+                    # Update existing memory instead of creating new one
+                    logger.info(
+                        "Dedup: merging into existing memory %s (similarity=%.3f)",
+                        mem.get("id", ""), sim,
+                    )
+                    return self.update(mem["id"], importance=max(mem.get("importance", 0), importance))
 
-        return self.store(text, category, importance, metadata)
+            return self.store(text, category, importance, metadata)
+
+        with self._dedup_lock:
+            # Search for similar existing memories
+            similar = self.recall(query=text, top_k=3)
+            for mem in similar:
+                existing_text = mem.get("text", "")
+                if not existing_text:
+                    continue
+                sim = embed_cache.similarity(text, existing_text)
+                if sim >= self._dedup_threshold:
+                    # Update existing memory instead of creating new one
+                    logger.info(
+                        "Dedup: merging into existing memory %s (similarity=%.3f)",
+                        mem.get("id", ""), sim,
+                    )
+                    return self.update(mem["id"], importance=max(mem.get("importance", 0), importance))
+
+            return self.store(text, category, importance, metadata)
 
 
 # ======================================================================

@@ -20,11 +20,13 @@ from .utils import tokenize
 logger = logging.getLogger(__name__)
 
 # Emotional keyword patterns for fallback extraction
+# Each pattern: (regex, intensity_label, is_positive)
 _EMOTION_PATTERNS = [
-    (re.compile(r'(太|很|非常|特别|超级|极其)\s*(高兴|开心|兴奋|激动|满意|舒服|棒|爽|快乐|幸福|幸福|感动|惊喜|愤怒|生气|烦躁|焦虑|紧张|害怕|恐惧|悲伤|难过|伤心|失望|痛苦|绝望|恶心|讨厌|烦|郁闷|无聊|孤独|寂寞|疲惫|累|困)'), "high"),
-    (re.compile(r'(!|！){2,}'), "high"),
-    (re.compile(r'(高兴|开心|兴奋|满意|舒服|棒|爽|快乐|幸福|感动|惊喜)'), "positive"),
-    (re.compile(r'(愤怒|生气|烦躁|焦虑|紧张|害怕|恐惧|悲伤|难过|伤心|失望|痛苦|绝望|恶心|讨厌|烦|郁闷|无聊|孤独|寂寞|疲惫|累|困)'), "negative"),
+    (re.compile(r'(太|很|非常|特别|超级|极其)\s*(高兴|开心|兴奋|激动|满意|舒服|棒|爽|快乐|幸福|感动|惊喜)'), "high", True),
+    (re.compile(r'(太|很|非常|特别|超级|极其)\s*(愤怒|生气|烦躁|焦虑|紧张|害怕|恐惧|悲伤|难过|伤心|失望|痛苦|绝望|恶心|讨厌|烦|郁闷|无聊|孤独|寂寞|疲惫|累|困)'), "high", False),
+    (re.compile(r'(!|！){2,}'), "high", None),  # neutral intensity marker
+    (re.compile(r'(高兴|开心|兴奋|满意|舒服|棒|爽|快乐|幸福|感动|惊喜)'), "positive", True),
+    (re.compile(r'(愤怒|生气|烦躁|焦虑|紧张|害怕|恐惧|悲伤|难过|伤心|失望|痛苦|绝望|恶心|讨厌|烦|郁闷|无聊|孤独|寂寞|疲惫|累|困)'), "negative", False),
 ]
 
 
@@ -252,13 +254,19 @@ class ConsolidationEngine:
                             break
 
             # Extract emotional moments from user input
-            for pattern, intensity in _EMOTION_PATTERNS:
+            for pattern, intensity, is_positive in _EMOTION_PATTERNS:
                 match = pattern.search(user)
                 if match:
+                    if is_positive is True:
+                        val = 0.8 if intensity == "high" else 0.6
+                    elif is_positive is False:
+                        val = -0.8 if intensity == "high" else -0.6
+                    else:
+                        val = 0.5  # neutral intensity marker (e.g. repeated punctuation)
                     emotional_moments.append({
                         "context": user[:80],
                         "emotion": match.group(0),
-                        "intensity": 0.8 if intensity == "high" else (0.6 if intensity == "positive" else -0.6),
+                        "intensity": val,
                     })
                     break
 
