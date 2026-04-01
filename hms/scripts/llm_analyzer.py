@@ -1,5 +1,5 @@
 """
-HMS v2 — LLM Analyzer Core.
+HMS v3 — LLM Analyzer Core.
 
 Replaces all dictionary-based analysis with LLM calls.
 Falls back to lightweight heuristics when LLM is unavailable.
@@ -32,7 +32,6 @@ class LLMAnalyzer:
 
     _PROMPTS_DIR = Path(__file__).parent.parent / "prompts"
     _env_loaded = False
-    _env_lock = threading.Lock()
     _env_lock = threading.Lock()
 
     def __init__(self, config: Optional[Dict[str, Any]] = None) -> None:

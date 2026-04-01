@@ -1,5 +1,5 @@
 """
-HMS v2 — Context Manager.
+HMS v3 — Context Manager.
 
 Three-layer infinite context architecture:
   Layer 1: Working memory (recent turns)
@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 
 class ContextManager:
     """
-    Orchestrates the HMS v2 cognitive layer:
+    Orchestrates the HMS v3 cognitive layer:
       - Async perception pipeline (pending -> batch LLM analysis)
       - Three-layer context composition for infinite context
       - Dynamic token budget allocation
@@ -111,10 +111,20 @@ class ContextManager:
         if not _os.path.isfile(self._pending_path):
             return []
 
+        entries = []
         with file_lock(self._pending_path):
-            entries = safe_read_jsonl(self._pending_path)
-            if entries:
-                safe_clear_jsonl(self._pending_path)
+            if _os.path.isfile(self._pending_path):
+                with open(self._pending_path, "r+", encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if line:
+                            try:
+                                entries.append(json.loads(line))
+                            except json.JSONDecodeError:
+                                continue
+                    if entries:
+                        f.seek(0)
+                        f.truncate(0)
         return entries
 
     def clear_pending(self) -> None:

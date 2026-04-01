@@ -1,5 +1,5 @@
 """
-HMS v2 — Collision Engine.
+HMS v3 — Collision Engine.
 
 LLM-driven semantic collision detection with embedding pre-filtering.
 Replaces v1's keyword-overlap approach with deep semantic analysis.
@@ -118,7 +118,7 @@ class CollisionEngine:
         sentiment_negative = {
             "讨厌", "差", "烂", "慢", "糟", "垃圾", "恶心", "烦", "不喜欢",
             "hate", "dislike", "bad", "worst", "terrible", "awful", "slow",
-            "讨厌", "反感", "不爽",
+            "反感", "不爽",
         }
         negation_words = [
             "不", "没", "无", "非", "未", "否", "别", "莫", "勿",

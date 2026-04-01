@@ -1,5 +1,5 @@
 """
-HMS v2 — Forgetting Engine.
+HMS v3 — Forgetting Engine.
 
 Ebbinghaus-inspired multi-factor memory decay with emotional modulation.
 Optimized from v1 with better half-life scaling and immortal guards.
@@ -101,7 +101,6 @@ class ForgettingEngine:
         """Persist decay state to disk if dirty."""
         if self._dirty:
             self.save_decay_state()
-            self._dirty = False
             self._dirty = False
 
     # ==================================================================

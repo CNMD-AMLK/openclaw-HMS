@@ -1,5 +1,5 @@
 """
-HMS v2 — Shared data models.
+HMS v3 — Shared data models.
 
 Extends v1 models with cognitive fingerprint and topic timeline support.
 Uses only Python standard library.

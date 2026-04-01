@@ -14,10 +14,12 @@ import fcntl
 import json
 import os
 import tempfile
+import threading
 from contextlib import contextmanager
 from typing import Any, Dict, List
 
 _lock_fds: Dict[str, int] = {}
+_lock_fds_lock = threading.Lock()
 
 
 def _get_lock_fd(path: str) -> int:
@@ -25,7 +27,9 @@ def _get_lock_fd(path: str) -> int:
     if path not in _lock_fds:
         lock_path = path + ".lock"
         os.makedirs(os.path.dirname(lock_path) or ".", exist_ok=True)
-        _lock_fds[path] = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o644)
+        with _lock_fds_lock:
+            if path not in _lock_fds:
+                _lock_fds[path] = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o644)
     return _lock_fds[path]
 
 
@@ -52,7 +56,7 @@ def atomic_write_json(path: str, data: Any) -> None:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
         os.replace(tmp_path, path)
-    except BaseException:
+    except Exception:
         try:
             os.unlink(tmp_path)
         except OSError:
@@ -100,4 +104,5 @@ def safe_read_jsonl(path: str) -> List[Dict[str, Any]]:
 def safe_clear_jsonl(path: str) -> None:
     """Truncate a JSONL file with lock."""
     with file_lock(path):
-        open(path, "w").close()
+        with open(path, "w") as f:
+            f.truncate(0)

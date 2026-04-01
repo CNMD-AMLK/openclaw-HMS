@@ -1,5 +1,5 @@
 """
-HMS v2 — Common utilities.
+HMS v3 — Common utilities.
 
 Shared functions used across multiple modules.
 """

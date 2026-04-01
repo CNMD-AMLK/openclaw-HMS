@@ -1,5 +1,5 @@
 """
-HMS v2 — Embedding Cache & Similarity Engine.
+HMS v3 — Embedding Cache & Similarity Engine.
 
 Provides local embedding computation for pre-filtering memories before
 expensive LLM calls. Reduces LLM usage by 60-70%.
@@ -22,6 +22,7 @@ import struct
 import logging
 from collections import OrderedDict
 from typing import Any, Dict, List, Optional, Tuple
+import threading
 
 from .file_utils import file_lock, atomic_write_json
 
@@ -114,6 +115,8 @@ class EmbeddingCache:
         self._embeddings: OrderedDict[str, List[float]] = OrderedDict()
         self._dirty = False
         self._max_cache_size = self.cfg.get("max_cache_size", 10000)
+        self._lock = threading.Lock()
+        self._lock = threading.Lock()
 
         # Init encoder
         self._encoder_type = "char_ngram"
@@ -215,18 +218,21 @@ class EmbeddingCache:
     def embed(self, text: str) -> List[float]:
         """Get embedding for text, using cache if available."""
         key = self._text_key(text)
-        if key in self._embeddings:
-            self._embeddings.move_to_end(key)
-            return self._embeddings[key]
-        
-        # Check cache size limit
-        if len(self._embeddings) >= self._max_cache_size:
-            self._evict_old_entries()
+        with self._lock:
+            if key in self._embeddings:
+                self._embeddings.move_to_end(key)
+                return self._embeddings[key]
+            
+            # Check cache size limit
+            if len(self._embeddings) >= self._max_cache_size:
+                self._evict_old_entries()
         
         vec = self._compute_embedding(text)
-        self._embeddings[key] = vec
-        self._dirty = True
-        return vec
+        with self._lock:
+            if key not in self._embeddings:
+                self._embeddings[key] = vec
+                self._dirty = True
+            return self._embeddings[key]
 
     def _evict_old_entries(self) -> None:
         """Evict least recently used 20% of cache entries when limit is reached."""
@@ -243,31 +249,36 @@ class EmbeddingCache:
         uncached_indices = []
         uncached_texts = []
 
-        for i, text in enumerate(texts):
-            key = self._text_key(text)
-            if key in self._embeddings:
-                results.append(self._embeddings[key])
-            else:
-                results.append(None)  # placeholder
-                uncached_indices.append(i)
-                uncached_texts.append(text)
+        with self._lock:
+            for i, text in enumerate(texts):
+                key = self._text_key(text)
+                if key in self._embeddings:
+                    results.append(self._embeddings[key])
+                else:
+                    results.append(None)  # placeholder
+                    uncached_indices.append(i)
+                    uncached_texts.append(text)
 
         if uncached_texts:
             if self._st_model is not None:
                 vecs = self._st_model.encode(uncached_texts, normalize_embeddings=True)
-                for idx, vec in zip(uncached_indices, vecs):
-                    v = vec.tolist()
-                    results[idx] = v
-                    key = self._text_key(texts[idx])
-                    self._embeddings[key] = v
-                    self._dirty = True
+                with self._lock:
+                    for idx, vec in zip(uncached_indices, vecs):
+                        v = vec.tolist()
+                        results[idx] = v
+                        key = self._text_key(texts[idx])
+                        if key not in self._embeddings:
+                            self._embeddings[key] = v
+                            self._dirty = True
             else:
-                for idx, text in zip(uncached_indices, uncached_texts):
-                    v = self._char_encoder.encode(text)
-                    results[idx] = v
-                    key = self._text_key(text)
-                    self._embeddings[key] = v
-                    self._dirty = True
+                with self._lock:
+                    for idx, text in zip(uncached_indices, uncached_texts):
+                        v = self._char_encoder.encode(text)
+                        results[idx] = v
+                        key = self._text_key(text)
+                        if key not in self._embeddings:
+                            self._embeddings[key] = v
+                            self._dirty = True
 
         return results
 

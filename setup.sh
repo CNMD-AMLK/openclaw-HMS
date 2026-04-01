@@ -37,16 +37,24 @@ if [ "$PYTHON_MAJOR" -lt 3 ] || ([ "$PYTHON_MAJOR" -eq 3 ] && [ "$PYTHON_MINOR" 
 fi
 echo "  ✓ Python $PYTHON_VERSION found"
 
-# ---- Step 2: Create directory structure ----
-echo "[2/6] Creating directory structure..."
+# ---- Step 2: Install dependencies ----
+echo "[2/6] Installing Python dependencies..."
+if $PYTHON_CMD -m pip install --quiet -r "${SCRIPT_DIR}/requirements.txt" 2>/dev/null; then
+    echo "  ✓ Dependencies installed"
+else
+    echo "  ⚠ Dependency installation failed, continuing..."
+fi
+
+# ---- Step 3: Create directory structure ----
+echo "[3/7] Creating directory structure..."
 mkdir -p "${HMS_DIR}/cache"
 mkdir -p "${HMS_DIR}/logs"
 mkdir -p "${HMS_DIR}/hooks"
 mkdir -p "${HMS_DIR}/prompts"
 echo "  ✓ Directories created"
 
-# ---- Step 3: Initialize cache files ----
-echo "[3/6] Initializing cache files..."
+# ---- Step 4: Initialize cache files ----
+echo "[4/7] Initializing cache files..."
 
 init_json() {
     local file="$1"
@@ -85,13 +93,13 @@ else
 fi
 
 # ---- Step 4: Set permissions ----
-echo "[4/6] Setting file permissions..."
+echo "[5/7] Setting file permissions..."
 chmod +x "${HMS_DIR}/scripts/"*.py 2>/dev/null || true
 chmod +x "${SCRIPT_DIR}/setup.sh"
 echo "  ✓ Permissions set"
 
 # ---- Step 5: Run tests ----
-echo "[5/6] Running tests..."
+echo "[6/7] Running tests..."
 cd "${SCRIPT_DIR}"
 if $PYTHON_CMD hms/scripts/test_e2e.py; then
     echo "  ✓ All tests passed"
@@ -102,7 +110,7 @@ else
 fi
 
 # ---- Step 6: Print OpenClaw commands ----
-echo "[6/6] Setup complete!"
+echo "[7/7] Setup complete!"
 echo ""
 echo "============================================"
 echo "OpenClaw Integration Commands"

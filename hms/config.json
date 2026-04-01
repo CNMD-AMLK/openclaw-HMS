@@ -1,6 +1,8 @@
 {
   "_comment": "HMS v3 Configuration — Multi-tier context window support",
 
+  "cache_dir": "cache",
+
   "importance_threshold": 6,
   "retrieval_top_k": 30,
   "forget_base_threshold": 0.08,

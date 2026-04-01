@@ -274,6 +274,8 @@ class MemoryManager:
             mid = mem.get("id", "")
             if mid:
                 self.forgetting.update_on_access(mid)
+        self.forgetting.flush()
+        self.forgetting.flush()
 
         # 4. Compose context
         recent_turns = self.context.read_pending()[-self.cfg.get("working_memory_recent_turns", 15):]
@@ -398,6 +400,8 @@ class MemoryManager:
                 mid = r.get("existing_id", "")
                 if mid:
                     self.forgetting.update_on_reinforce(mid)
+            self.forgetting.flush()
+            self.forgetting.flush()
 
     # ==================================================================
     # 4. Consolidate (cron: daily 3AM)
@@ -422,7 +426,7 @@ class MemoryManager:
         }
 
         # 1. Get recent conversations for compression
-        pending = self.context.read_pending()
+        pending = self.context.pop_all_pending()
         if pending:
             # Compress in batches
             batch_size = self.cfg.get("compression_window_turns", 10)
