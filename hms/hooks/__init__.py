@@ -5,19 +5,19 @@ OpenClaw does not expose a native hook registration API.
 Instead, HMS integrates through:
 
 1. Cron jobs (recommended for production):
-   - openclaw cron add --schedule "* * * * *" --command "python -m hms.scripts.memory_manager process_pending"
-   - openclaw cron add --schedule "0 3 * * *" --command "python -m hms.scripts.memory_manager consolidate"
-   - openclaw cron add --schedule "0 4 * * 0" --command "python -m hms.scripts.memory_manager forget"
+   - openclaw cron add --schedule "* * * * *" --command "python -m hms process_pending"
+   - openclaw cron add --schedule "0 3 * * *" --command "python -m hms consolidate"
+   - openclaw cron add --schedule "0 4 * * 0" --command "python -m hms forget"
 
 2. Skill/Plugin interface:
    - Import MemoryManager directly in your OpenClaw skill/plugin
    - Call mgr.on_message_received() / mgr.on_message_sent() from skill handlers
 
 3. Direct CLI usage:
-   - python -m hms.scripts.memory_manager received "用户消息"
-   - python -m hms.scripts.memory_manager process_pending
-   - python -m hms.scripts.memory_manager consolidate
-   - python -m hms.scripts.memory_manager forget
+   - python -m hms received "用户消息"
+   - python -m hms process_pending
+   - python -m hms consolidate
+   - python -m hms forget
 """
 
 from __future__ import annotations
@@ -127,9 +127,9 @@ if __name__ == "__main__":
         print("Commands: received, sent, process_pending, consolidate, forget")
         print("")
         print("Integration options:")
-        print("  1. Cron: openclaw cron add --schedule '* * * * *' --command 'python -m hms.scripts.memory_manager process_pending'")
+        print("  1. Cron: openclaw cron add --schedule '* * * * *' --command 'python -m hms process_pending'")
         print("  2. Skill: import hms.hooks; hms.hooks.on_message_received(msg)")
-        print("  3. CLI:   python -m hms.scripts.memory_manager received '消息'")
+        print("  3. CLI:   python -m hms received '消息'")
         sys.exit(1)
 
     cmd = sys.argv[1]
