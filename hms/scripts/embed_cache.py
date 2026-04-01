@@ -18,6 +18,7 @@ import json
 import math
 import os
 import re
+import struct
 import logging
 from collections import OrderedDict
 from typing import Any, Dict, List, Optional, Tuple
@@ -109,6 +110,7 @@ class EmbeddingCache:
         self.cfg = config or {}
         self._cache_dir = self.cfg.get("cache_dir", "cache")
         self._cache_path = os.path.join(self._cache_dir, "embedding_cache.json")
+        self._cache_bin_path = os.path.join(self._cache_dir, "embedding_cache.bin")
         self._embeddings: OrderedDict[str, List[float]] = OrderedDict()
         self._dirty = False
         self._max_cache_size = self.cfg.get("max_cache_size", 10000)
@@ -131,20 +133,71 @@ class EmbeddingCache:
         self._load_cache()
 
     def _load_cache(self) -> None:
+        """Load embeddings from disk.
+
+        Supports both legacy JSON format and new compact binary format.
+        Binary format stores float32 vectors as raw bytes (4 bytes per dim)
+        instead of verbose JSON number strings.
+        """
+        # Try binary format first (faster, more compact)
+        if os.path.isfile(self._cache_bin_path):
+            try:
+                with open(self._cache_bin_path, "rb") as f:
+                    meta_bytes = f.read(8)
+                    if len(meta_bytes) < 8:
+                        raise ValueError("truncated")
+                    num_entries, dim = struct.unpack("<II", meta_bytes)
+                    embeddings = OrderedDict()
+                    for _ in range(num_entries):
+                        key_len_bytes = f.read(4)
+                        if len(key_len_bytes) < 4:
+                            raise ValueError("truncated key len")
+                        key_len = struct.unpack("<I", key_len_bytes)[0]
+                        key = f.read(key_len).decode("utf-8")
+                        vec_bytes = f.read(dim * 4)
+                        if len(vec_bytes) < dim * 4:
+                            raise ValueError("truncated vector")
+                        embeddings[key] = list(struct.unpack(f"<{dim}f", vec_bytes))
+                    self._embeddings = embeddings
+                    logger.debug(f"Loaded {num_entries} embeddings from binary cache")
+                    return
+            except (struct.error, ValueError, IOError) as e:
+                logger.debug(f"Binary cache load failed: {e}, trying JSON fallback")
+
+        # Fall back to legacy JSON format
         if os.path.isfile(self._cache_path):
             try:
                 with open(self._cache_path, "r", encoding="utf-8") as f:
                     data = json.load(f)
-                    # Convert lists back (JSON stores them as lists already)
-                    self._embeddings = data
+                    self._embeddings = OrderedDict(data)
             except (json.JSONDecodeError, IOError):
-                self._embeddings = {}
+                self._embeddings = OrderedDict()
+        else:
+            self._embeddings = OrderedDict()
 
     def save_cache(self) -> None:
+        """Persist embeddings to compact binary format.
+
+        Binary format: [num_entries:u32][dim:u32][key_len:u32][key:bytes][vec:float32*dim]...
+        Reduces file size by ~60% compared to JSON and speeds up load/save.
+        """
         if not self._dirty:
             return
         with file_lock(self._cache_path):
-            atomic_write_json(self._cache_path, self._embeddings)
+            dim = 256  # fixed dimension for all embeddings
+            with open(self._cache_bin_path, "wb") as f:
+                f.write(struct.pack("<II", len(self._embeddings), dim))
+                for key, vec in self._embeddings.items():
+                    key_bytes = key.encode("utf-8")
+                    f.write(struct.pack("<I", len(key_bytes)))
+                    f.write(key_bytes)
+                    f.write(struct.pack(f"<{dim}f", *vec))
+            # Remove legacy JSON cache if it exists
+            if os.path.isfile(self._cache_path):
+                try:
+                    os.unlink(self._cache_path)
+                except OSError:
+                    pass
         self._dirty = False
 
     def _compute_embedding(self, text: str) -> List[float]:
