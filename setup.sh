@@ -16,7 +16,7 @@ echo "============================================"
 echo ""
 
 # ---- Step 1: Check Python version ----
-echo "[1/6] Checking Python version..."
+echo "[1/7] Checking Python version..."
 PYTHON_CMD=""
 if command -v python3 &> /dev/null; then
     PYTHON_CMD="python3"
@@ -38,7 +38,7 @@ fi
 echo "  ✓ Python $PYTHON_VERSION found"
 
 # ---- Step 2: Install dependencies ----
-echo "[2/6] Installing Python dependencies..."
+echo "[2/7] Installing Python dependencies..."
 if $PYTHON_CMD -m pip install --quiet -r "${SCRIPT_DIR}/requirements.txt" 2>/dev/null; then
     echo "  ✓ Dependencies installed"
 else
@@ -92,13 +92,13 @@ else
     echo "  ✓ pending_processing.jsonl already exists"
 fi
 
-# ---- Step 4: Set permissions ----
+# ---- Step 5: Set permissions ----
 echo "[5/7] Setting file permissions..."
 chmod +x "${HMS_DIR}/scripts/"*.py 2>/dev/null || true
 chmod +x "${SCRIPT_DIR}/setup.sh"
 echo "  ✓ Permissions set"
 
-# ---- Step 5: Run tests ----
+# ---- Step 6: Run tests ----
 echo "[6/7] Running tests..."
 cd "${SCRIPT_DIR}"
 if $PYTHON_CMD hms/scripts/test_e2e.py; then
@@ -109,7 +109,7 @@ else
     echo "  Continuing with setup..."
 fi
 
-# ---- Step 6: Print OpenClaw commands ----
+# ---- Step 7: Print OpenClaw commands ----
 echo "[7/7] Setup complete!"
 echo ""
 echo "============================================"

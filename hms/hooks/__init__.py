@@ -29,6 +29,16 @@ from typing import Any, Dict, Optional
 
 from ..scripts.memory_manager import MemoryManager
 
+__all__ = [
+    "get_manager",
+    "reset_manager",
+    "on_message_received",
+    "on_message_sent",
+    "process_pending",
+    "consolidate",
+    "forget",
+]
+
 logger = logging.getLogger(__name__)
 
 _manager: Optional[MemoryManager] = None
@@ -43,8 +53,10 @@ def get_manager() -> MemoryManager:
 
 
 def reset_manager() -> None:
-    """Reset the global MemoryManager instance."""
+    """Reset the global MemoryManager instance, closing resources first."""
     global _manager
+    if _manager is not None:
+        _manager.close()
     _manager = None
 
 

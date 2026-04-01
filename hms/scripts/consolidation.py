@@ -202,16 +202,16 @@ class ConsolidationEngine:
         for turn in conversations:
             user = turn.get("user", "")
             assistant = turn.get("assistant", "")
-            
+
             if len(user) > 10:
                 summaries.append(f"用户问: {user[:80]}")
-            
+
             combined_text = user + " " + assistant
-            
+
             for term in tech_terms:
                 if term.lower() in combined_text.lower():
                     all_entities.add(term)
-            
+
             matched_topic = False
             for topic, keywords in topic_keywords.items():
                 for kw in keywords:
@@ -219,10 +219,7 @@ class ConsolidationEngine:
                         all_topics.add(topic)
                         matched_topic = True
                         break
-            
-            if not matched_topic:
-                all_topics.add("general")
-            
+
             for marker in decision_markers:
                 if marker in user:
                     sentences = user.split("。")
@@ -238,6 +235,10 @@ class ConsolidationEngine:
                         if marker in sent and len(preferences) < 5:
                             preferences.append(sent.strip()[:100])
                             break
+
+        # Add general topic only if no topics were matched at all
+        if not all_topics:
+            all_topics.add("general")
 
         return {
             "summary": "; ".join(summaries[:10]) if summaries else "无对话摘要",

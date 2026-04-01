@@ -10,13 +10,18 @@ Provides:
 
 from __future__ import annotations
 
-import fcntl
 import json
 import os
 import tempfile
 import threading
 from contextlib import contextmanager
 from typing import Any, Dict, List
+
+try:
+    import fcntl
+    _HAS_FCNTL = True
+except ImportError:
+    _HAS_FCNTL = False
 
 _lock_fds: Dict[str, int] = {}
 _lock_fds_lock = threading.Lock()
@@ -37,14 +42,18 @@ def _get_lock_fd(path: str) -> int:
 def file_lock(path: str, mode: str = "exclusive"):
     """
     File-level lock using fcntl.flock with cached lock FD.
+    Falls back to no-op on Windows (no fcntl support).
     Yields the lock file descriptor. Releases on exit.
     """
     fd = _get_lock_fd(path)
-    try:
-        fcntl.flock(fd, fcntl.LOCK_EX)
+    if _HAS_FCNTL:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX)
+            yield fd
+        finally:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+    else:
         yield fd
-    finally:
-        fcntl.flock(fd, fcntl.LOCK_UN)
 
 
 def atomic_write_json(path: str, data: Any) -> None:
@@ -104,5 +113,16 @@ def safe_read_jsonl(path: str) -> List[Dict[str, Any]]:
 def safe_clear_jsonl(path: str) -> None:
     """Truncate a JSONL file with lock."""
     with file_lock(path):
-        with open(path, "w") as f:
+        with open(path, "w", encoding="utf-8") as f:
             f.truncate(0)
+
+
+def close_all_lock_fds() -> None:
+    """Close all cached lock file descriptors. Call on shutdown for clean exit."""
+    with _lock_fds_lock:
+        for fd in _lock_fds.values():
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+        _lock_fds.clear()

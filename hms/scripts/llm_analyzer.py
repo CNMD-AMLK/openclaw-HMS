@@ -46,6 +46,7 @@ class LLMAnalyzer:
 
         # Gateway configuration
         self._gateway_url = self.cfg.get("gateway_url", "http://127.0.0.1:3578")
+        self._session = requests.Session()
 
         # Load .env file if not already loaded (thread-safe)
         if not LLMAnalyzer._env_loaded:
@@ -59,6 +60,11 @@ class LLMAnalyzer:
         self._circuit_failure_threshold = 5
         self._circuit_cooldown_seconds = 300  # 5 minutes
 
+    def close(self) -> None:
+        """Close the HTTP session and release connections."""
+        if self._session:
+            self._session.close()
+
     @staticmethod
     def _midnight_utc() -> float:
         """Return the Unix timestamp for the most recent midnight UTC."""
@@ -70,7 +76,7 @@ class LLMAnalyzer:
         """Load .env file if exists."""
         env_path = Path(__file__).parent.parent.parent / ".env"
         if env_path.exists():
-            with open(env_path) as f:
+            with open(env_path, encoding="utf-8") as f:
                 for line in f:
                     line = line.strip()
                     if line and not line.startswith("#") and "=" in line:
@@ -190,7 +196,7 @@ class LLMAnalyzer:
             "temperature": temperature,
         }
 
-        resp = requests.post(
+        resp = self._session.post(
             f"{self._gateway_url}/api/v1/chat/completions",
             json=payload,
             timeout=self._timeout,

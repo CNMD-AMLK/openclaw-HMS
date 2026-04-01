@@ -116,7 +116,6 @@ class EmbeddingCache:
         self._dirty = False
         self._max_cache_size = self.cfg.get("max_cache_size", 10000)
         self._lock = threading.Lock()
-        self._lock = threading.Lock()
 
         # Init encoder
         self._encoder_type = "char_ngram"

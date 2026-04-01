@@ -45,12 +45,24 @@ class MemoryAdapter:
         self.cfg = config or {}
         self._tools = tool_impl or {}
         self._session = requests.Session()
-        
+
         # Gateway URL: config > env var > default
         self._gateway_url = self.cfg.get(
             "gateway_url",
             os.environ.get("OPENCLAW_GATEWAY_URL", "http://127.0.0.1:3578")
         )
+
+    def close(self) -> None:
+        """Close the HTTP session and release connections."""
+        if self._session:
+            self._session.close()
+            self._session = None
+
+    def __enter__(self) -> "MemoryAdapter":
+        return self
+
+    def __exit__(self, *args: Any) -> None:
+        self.close()
 
     def _call_gateway_api(self, endpoint: str, payload: Dict[str, Any]) -> Any:
         """Call OpenClaw Gateway internal API via HTTP POST with connection pooling."""
@@ -275,7 +287,6 @@ class MemoryManager:
             if mid:
                 self.forgetting.update_on_access(mid)
         self.forgetting.flush()
-        self.forgetting.flush()
 
         # 4. Compose context
         recent_turns = self.context.read_pending()[-self.cfg.get("working_memory_recent_turns", 15):]
@@ -400,7 +411,6 @@ class MemoryManager:
                 mid = r.get("existing_id", "")
                 if mid:
                     self.forgetting.update_on_reinforce(mid)
-            self.forgetting.flush()
             self.forgetting.flush()
 
     # ==================================================================
@@ -533,6 +543,21 @@ class MemoryManager:
             "kept": len(evaluation["to_keep"]),
             "forget_ratio": evaluation["report"]["forget_ratio"],
         }
+
+    def close(self) -> None:
+        """Close all resources (HTTP sessions, file descriptors)."""
+        self.adapter.close()
+        self.perception.llm.close()
+        self.collision_engine.llm.close()
+        self.consolidation.llm.close()
+        from .file_utils import close_all_lock_fds
+        close_all_lock_fds()
+
+    def __enter__(self) -> "MemoryManager":
+        return self
+
+    def __exit__(self, *args: Any) -> None:
+        self.close()
 
 
 # ======================================================================
