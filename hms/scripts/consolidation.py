@@ -166,23 +166,82 @@ class ConsolidationEngine:
 
     @staticmethod
     def _fallback_compress(conversations: List[Dict[str, str]]) -> Dict[str, Any]:
-        """Simple fallback compression without LLM."""
-        all_topics = set()
-        all_entities = set()
-        summaries = []
+        """Simple fallback compression without LLM. Now properly extracts topics and entities."""
+        all_topics: set[str] = set()
+        all_entities: set[str] = set()
+        summaries: list[str] = []
+        key_decisions: list[str] = []
+        preferences: list[str] = []
+
+        # Common tech terms for entity extraction
+        tech_terms = [
+            "Python", "Java", "JavaScript", "TypeScript", "Go", "Rust", "C++", "C#",
+            "Docker", "Kubernetes", "K8s", "Git", "GitHub", "GitLab",
+            "React", "Vue", "Angular", "Node.js", "Django", "Flask",
+            "MySQL", "PostgreSQL", "MongoDB", "Redis",
+            "AWS", "Azure", "GCP", "Linux", "Windows", "MacOS",
+            "VS Code", "Vim", "Emacs", "IntelliJ", "PyCharm",
+        ]
+
+        # Topic keywords mapping
+        topic_keywords = {
+            "编程": ["代码", "编程", "开发", "程序", "函数", "bug", "error"],
+            "运维": ["部署", "服务器", "docker", "k8s", "运维", "监控"],
+            "学习": ["学习", "教程", "文档", "怎么", "如何", "为什么"],
+            "项目": ["项目", "任务", "需求", "功能", "版本", "发布"],
+            "工具": ["工具", "软件", "插件", "扩展", "配置"],
+        }
+
+        decision_markers = ["决定", "选择", "确认", "用", "采用", "就用这个"]
+        pref_markers = ["喜欢", "偏好", "习惯", "常用", "推荐"]
 
         for turn in conversations:
             user = turn.get("user", "")
             assistant = turn.get("assistant", "")
-            summaries.append(f"用户问: {user[:80]}")
+            
+            # Extract summary
+            if len(user) > 10:
+                summaries.append(f"用户问: {user[:80]}")
+            
+            combined_text = user + " " + assistant
+            
+            # Extract entities
+            for term in tech_terms:
+                if term.lower() in combined_text.lower():
+                    all_entities.add(term)
+            
+            # Extract topics
+            for topic, keywords in topic_keywords.items():
+                for kw in keywords:
+                    if kw in combined_text.lower():
+                        all_topics.add(topic)
+                        break
+            
+            # Extract decisions
+            for marker in decision_markers:
+                if marker in user:
+                    sentences = user.split("。")
+                    for sent in sentences:
+                        if marker in sent and len(key_decisions) < 5:
+                            key_decisions.append(sent.strip()[:100])
+                            break
+            
+            # Extract preferences
+            for marker in pref_markers:
+                if marker in user:
+                    sentences = user.split("。")
+                    for sent in sentences:
+                        if marker in sent and len(preferences) < 5:
+                            preferences.append(sent.strip()[:100])
+                            break
 
         return {
-            "summary": "; ".join(summaries[:10]),
-            "key_decisions": [],
-            "preferences_revealed": [],
+            "summary": "; ".join(summaries[:10]) if summaries else "无对话摘要",
+            "key_decisions": key_decisions[:5],
+            "preferences_revealed": preferences[:5],
             "emotional_moments": [],
-            "entities_mentioned": list(all_entities),
-            "topics": list(all_topics),
+            "entities_mentioned": list(all_entities)[:10],
+            "topics": list(all_topics)[:5],
             "thinking_patterns": [],
             "created_at": datetime.now(timezone.utc).isoformat(),
             "original_turn_count": len(conversations),

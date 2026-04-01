@@ -1,4 +1,4 @@
-# HMS — Hierarchical Memory Scaffold v3.0
+# HMS — Hierarchical Memory Scaffold v3.0.2
 
 > **让 AI 拥有真正的记忆 — 通过 LLM 驱动的认知记忆系统实现无限上下文**
 
@@ -7,6 +7,7 @@
 v1 使用硬编码词典做情感分析和实体提取——这就像用字典去理解人类思维。
 v2 彻底重构：**所有认知分析全部交给 LLM**，系统只负责架构和调度。
 v3 进化：**多档位上下文窗口支持 + Embedding 预过滤降本 60-70%**。
+v3.0.2 修复：**Gateway集成 + 配置化 + 代码去重 + 提示词优化**。
 
 ## 🏗️ 架构概要
 
@@ -65,7 +66,8 @@ hms/
 │   ├── decay_state.json
 │   ├── embedding_cache.json         # v3 新增: Embedding 缓存
 │   └── pending_processing.jsonl
-├── hooks/                  # OpenClaw 钩子
+├── hooks/                  # OpenClaw 钩子 (v3.0.2 新增)
+│   └── __init__.py         # 钩子接口实现
 ├── logs/
 └── scripts/
     ├── __init__.py
@@ -92,6 +94,28 @@ hms/
 | 错误处理 | 固定重试 | 指数退避 + Circuit Breaker |
 | Token 估算 | len//2 | 中英文区分估算 |
 | 测试覆盖 | 28 tests | 40 tests + Mock 集成 |
+
+## 📋 v3.0.2 更新内容 (2026-04-01)
+
+### 🔧 关键修复
+- **Gateway集成**：LLM调用改为通过OpenClaw Gateway，不再直连外部API
+- **配置化**：Gateway地址支持配置文件和环境变量 `OPENCLAW_GATEWAY_URL`
+- **代码去重**：`forgetting.py` 统一使用 `models.py` 的 `DecayState.calculate_strength()`
+- **提示词优化**：`perceive.txt` 添加4个few-shot示例，提升LLM输出稳定性
+- **Fallback修复**：`_fallback_compress()` 现在正确提取实体和主题
+- **OpenClaw集成**：新增 `hooks/` 目录实现钩子接口
+
+### 📁 新增文件
+- `hms/hooks/__init__.py` - OpenClaw钩子实现
+
+### ⚙️ 配置变更
+- `config.json` 新增 `gateway_url` 配置项
+
+### 🐛 问题修复
+- 修复LLM调用绕过Gateway的致命缺陷
+- 修复Gateway地址硬编码问题
+- 修复Fallback压缩创建空集合但不填充的问题
+- 改进bare except异常处理（添加日志记录）
 
 ## ⚙️ 工作原理
 

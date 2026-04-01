@@ -33,17 +33,24 @@ from .embed_cache import EmbeddingCache
 class MemoryAdapter:
     """
     All calls to memory-lancedb-pro and graph-memory go through here.
+    Gateway URL is configurable via config or environment variable.
     """
 
-    GATEWAY_BASE_URL = "http://127.0.0.1:3578"
     GATEWAY_TIMEOUT = 10
 
-    def __init__(self, tool_impl: Optional[Dict[str, Callable]] = None) -> None:
+    def __init__(self, config: Optional[Dict[str, Any]] = None, tool_impl: Optional[Dict[str, Callable]] = None) -> None:
+        self.cfg = config or {}
         self._tools = tool_impl or {}
+        
+        # Gateway URL: config > env var > default
+        self._gateway_url = self.cfg.get(
+            "gateway_url",
+            os.environ.get("OPENCLAW_GATEWAY_URL", "http://127.0.0.1:3578")
+        )
 
     def _call_gateway_api(self, endpoint: str, payload: Dict[str, Any]) -> Any:
         """Call OpenClaw Gateway internal API via HTTP POST."""
-        url = f"{self.GATEWAY_BASE_URL}{endpoint}"
+        url = f"{self._gateway_url}{endpoint}"
         resp = requests.post(url, json=payload, timeout=self.GATEWAY_TIMEOUT)
         resp.raise_for_status()
         return resp.json()
@@ -172,8 +179,8 @@ class MemoryManager:
         if context_tier:
             self.cfg = self._apply_tier(self.cfg, context_tier)
 
-        # Init adapter
-        self.adapter = MemoryAdapter(tool_impl)
+        # Init adapter with config for gateway_url
+        self.adapter = MemoryAdapter(self.cfg, tool_impl)
 
         # Init sub-modules
         self.perception = PerceptionEngine(self.cfg)

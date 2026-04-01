@@ -30,8 +30,7 @@ class LLMAnalyzer:
     """
     Central LLM analysis hub. All cognitive tasks route through here.
 
-    Uses the current OpenClaw model via the `openclaw` CLI or a direct
-    Python subprocess call to the model's API.
+    Uses the current OpenClaw model via the Gateway API.
     """
 
     _PROMPTS_DIR = Path(__file__).parent.parent / "prompts"
@@ -46,6 +45,9 @@ class LLMAnalyzer:
         self._token_count = 0
         self._budget = self.cfg.get("llm_budget_tokens_per_day", 50000)
         self._budget_reset = time.time()
+
+        # Gateway configuration
+        self._gateway_url = self.cfg.get("gateway_url", "http://127.0.0.1:3578")
 
         # Load .env file if not already loaded
         if not LLMAnalyzer._env_loaded:
@@ -81,7 +83,7 @@ class LLMAnalyzer:
         temperature: float = 0.1,
     ) -> Optional[str]:
         """
-        Call the current OpenClaw model with exponential backoff,
+        Call the current OpenClaw model via Gateway with exponential backoff,
         error classification, and circuit breaker.
         """
         # Budget check
@@ -100,14 +102,14 @@ class LLMAnalyzer:
 
         for attempt in range(self._max_retries):
             try:
-                result = self._try_openclaw_cli(prompt, max_tokens, temperature)
+                result = self._try_gateway_api(prompt, max_tokens, temperature)
                 if result:
                     self._call_count += 1
                     self._token_count += estimate_tokens(result)
                     # Reset circuit breaker on success
                     self._consecutive_failures = 0
                     return result
-                # No API key or empty result — not a failure, just unavailable
+                # Empty result — not a failure, just unavailable
                 return None
             except requests.exceptions.HTTPError as exc:
                 status = exc.response.status_code if exc.response is not None else 0
@@ -169,39 +171,31 @@ class LLMAnalyzer:
             # Could be HTTP-date format, default to 5s
             return 5.0
 
-    def _try_openclaw_cli(
+    def _try_gateway_api(
         self, prompt: str, max_tokens: int, temperature: float
     ) -> Optional[str]:
-        """Call OpenRouter API via Python requests."""
-        api_key = os.environ.get("OPENROUTER_API_KEY")
-        if not api_key:
-            return None
-        model = os.environ.get("OPENROUTER_MODEL", "xiaomi/mimo-v2-pro")
-
-        headers = {
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        }
+        """Call OpenClaw Gateway API instead of direct model API."""
+        # Use Gateway's chat completion endpoint
         payload = {
-            "model": model,
+            "model": self._model,
+            "messages": [{"role": "user", "content": prompt}],
             "max_tokens": max_tokens,
             "temperature": temperature,
-            "messages": [{"role": "user", "content": prompt}],
         }
 
         resp = requests.post(
-            "https://openrouter.ai/api/v1/chat/completions",
-            headers=headers,
+            f"{self._gateway_url}/api/v1/chat/completions",
             json=payload,
             timeout=self._timeout,
         )
         resp.raise_for_status()
         data = resp.json()
-        message = data["choices"][0]["message"]
+        
+        message = data.get("choices", [{}])[0].get("message", {})
         content = message.get("content")
         if content:
             return content.strip()
-        # MiMo may return reasoning instead of content
+        # Some models may return reasoning instead of content
         reasoning = message.get("reasoning")
         if reasoning:
             return reasoning.strip()

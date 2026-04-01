@@ -14,11 +14,13 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from .file_utils import atomic_write_json, safe_read_json, file_lock
+from .models import DecayState
 
 
 class ForgettingEngine:
     """
     Manages memory decay, strength evaluation, and forgetting decisions.
+    Uses DecayState from models.py for strength calculation to avoid duplication.
     """
 
     def __init__(self, config: Optional[Dict[str, Any]] = None) -> None:
@@ -86,7 +88,7 @@ class ForgettingEngine:
         self.save_decay_state()
 
     # ==================================================================
-    # Strength calculation
+    # Strength calculation (uses DecayState from models.py)
     # ==================================================================
 
     def calculate_strength(
@@ -95,51 +97,33 @@ class ForgettingEngine:
         current_time: Optional[datetime] = None,
     ) -> float:
         """
-        Multi-factor memory strength:
-
-        S = importance
-            * (1 + arousal * emotion_slowdown)
-            * (1 + reinforced * reinforce_weight)
-            * (1 + confidence * 0.5)
-            * (1 + related * 0.05)
-            * time_decay
-
-        time_decay = e^(-0.693 * hours / half_life)
-        half_life scales with importance: 168h * (importance / 5)
+        Multi-factor memory strength calculation.
+        Delegates to DecayState.calculate_strength() to avoid code duplication.
         """
         s = self._states.get(memory_id)
         if not s or not s.get("last_accessed"):
             return 0.0
 
+        # Create a DecayState instance from the stored state
+        decay_state = DecayState(
+            memory_id=memory_id,
+            last_accessed=s.get("last_accessed", ""),
+            access_count=s.get("access_count", 0),
+            times_reinforced=s.get("times_reinforced", 0),
+            importance=s.get("importance", 5.0),
+            emotional_arousal=s.get("emotional_arousal", 0.0),
+            emotional_valence=s.get("emotional_valence", 0.0),
+            belief_confidence=s.get("belief_confidence", 0.5),
+            related_count=s.get("related_count", 0),
+        )
+
         now = current_time or datetime.now(timezone.utc)
-        if now.tzinfo is None:
-            now = now.replace(tzinfo=timezone.utc)
-
-        last = datetime.fromisoformat(s["last_accessed"])
-        if last.tzinfo is None:
-            last = last.replace(tzinfo=timezone.utc)
-
-        hours = max(0.0, (now - last).total_seconds() / 3600.0)
-
-        importance = s.get("importance", 5.0)
-        arousal = s.get("emotional_arousal", 0.0)
-        reinforced = s.get("times_reinforced", 0)
-        confidence = s.get("belief_confidence", 0.5)
-        related = s.get("related_count", 0)
-
-        # Half-life scales with importance (24h–720h)
-        half_life = 168.0 * (importance / 5.0)
-        half_life = max(24.0, min(720.0, half_life))
-
-        time_decay = math.exp(-0.693147 * hours / half_life)
-
-        emo_mult = 1.0 + arousal * self._emotion_slowdown
-        rein_mult = 1.0 + reinforced * 0.15
-        conf_mult = 1.0 + confidence * 0.5
-        rel_mult = 1.0 + related * 0.05
-
-        strength = importance * emo_mult * rein_mult * conf_mult * rel_mult * time_decay
-        return round(max(0.0, strength), 4)
+        return decay_state.calculate_strength(
+            now,
+            emotion_slowdown=self._emotion_slowdown,
+            reinforcement_weight=0.15,
+            half_life_hours=168.0,
+        )
 
     # ==================================================================
     # Dynamic threshold

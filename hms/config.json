@@ -15,6 +15,9 @@
   "working_memory_recent_turns": 80,
   "compress_every_n_turns": 50,
 
+  "_comment_gateway": "=== Gateway Configuration ===",
+  "gateway_url": "http://127.0.0.1:3578",
+
   "_comment_llm": "=== LLM Configuration ===",
 
   "llm_model": "__current__",

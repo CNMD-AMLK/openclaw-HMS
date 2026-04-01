@@ -18,6 +18,80 @@
 }
 ```
 
+## 示例
+
+### 示例 1: 简单问候
+用户消息: 你好
+助手回复: 你好！有什么可以帮你的吗？
+
+```json
+{
+  "entities": [],
+  "emotion": {"valence": 0.2, "arousal": 0.1, "primary_emotion": "neutral", "evidence": "简单的问候语"},
+  "intent": {"primary": "greeting", "confidence": 0.9},
+  "importance": 2,
+  "importance_reason": "日常寒暄，无实质内容",
+  "category": "fact",
+  "topics": [],
+  "key_facts": [],
+  "should_remember": false
+}
+```
+
+### 示例 2: 技术问题
+用户消息: Python怎么安装第三方库？
+助手回复: 使用 pip install 命令，例如 pip install requests
+
+```json
+{
+  "entities": [{"name": "Python", "type": "tool"}, {"name": "pip", "type": "tool"}],
+  "emotion": {"valence": 0.0, "arousal": 0.2, "primary_emotion": "curious", "evidence": "询问技术问题"},
+  "intent": {"primary": "question", "confidence": 0.95},
+  "importance": 5,
+  "importance_reason": "技术学习相关，中等重要性",
+  "category": "fact",
+  "topics": ["编程", "Python", "包管理"],
+  "key_facts": ["pip install 用于安装Python第三方库"],
+  "should_remember": true
+}
+```
+
+### 示例 3: 个人偏好
+用户消息: 我决定以后用 VS Code 写代码，感觉比 Vim 好用多了
+助手回复: VS Code 确实对新手更友好，有丰富的插件生态
+
+```json
+{
+  "entities": [{"name": "VS Code", "type": "tool"}, {"name": "Vim", "type": "tool"}],
+  "emotion": {"valence": 0.6, "arousal": 0.4, "primary_emotion": "satisfied", "evidence": "表达偏好和满意"},
+  "intent": {"primary": "statement", "confidence": 0.9},
+  "importance": 8,
+  "importance_reason": "用户明确表达了工具偏好，这是重要的个人习惯信息",
+  "category": "preference",
+  "topics": ["开发工具", "编辑器"],
+  "key_facts": ["用户偏好 VS Code 而非 Vim"],
+  "should_remember": true
+}
+```
+
+### 示例 4: 重要决定
+用户消息: 这个项目必须在下周五之前完成，这是死命令
+助手回复: 明白了，我会优先处理这个项目
+
+```json
+{
+  "entities": [{"name": "项目", "type": "project"}],
+  "emotion": {"valence": -0.2, "arousal": 0.7, "primary_emotion": "stressed", "evidence": "死命令、紧迫的时间"},
+  "intent": {"primary": "instruction", "confidence": 0.95},
+  "importance": 9,
+  "importance_reason": "明确的截止日期和紧急任务",
+  "category": "decision",
+  "topics": ["项目管理", "截止日期"],
+  "key_facts": ["项目截止日期：下周五", "这是紧急任务"],
+  "should_remember": true
+}
+```
+
 ## 对话
 
 用户消息: {user_message}
