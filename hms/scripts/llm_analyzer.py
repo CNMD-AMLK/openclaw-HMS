@@ -9,21 +9,14 @@ from __future__ import annotations
 
 import json
 import os
-import re
 import time
+import logging
 
 import requests
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-
-def estimate_tokens(text: str) -> int:
-    """Rough token estimation: Chinese ~1.5 char/token, English ~4 char/token."""
-    if not text:
-        return 0
-    cn = sum(1 for c in text if "\u4e00" <= c <= "\u9fff")
-    en = len(text) - cn
-    return int(cn / 1.5 + en / 4)
+from .utils import estimate_tokens
 
 
 class LLMAnalyzer:
@@ -141,7 +134,8 @@ class LLMAnalyzer:
                 time.sleep(wait)
                 self._consecutive_failures += 1
 
-            except Exception:
+            except Exception as e:
+                logger.debug(f"LLM call failed: {e}")
                 self._consecutive_failures += 1
                 if attempt < self._max_retries - 1:
                     time.sleep(min(2 ** attempt, 30))
@@ -191,7 +185,13 @@ class LLMAnalyzer:
         resp.raise_for_status()
         data = resp.json()
         
-        message = data.get("choices", [{}])[0].get("message", {})
+        # Safely extract message from response
+        choices = data.get("choices", [])
+        if not choices:
+            logger.warning("Empty choices in API response")
+            return None
+        
+        message = choices[0].get("message", {})
         content = message.get("content")
         if content:
             return content.strip()

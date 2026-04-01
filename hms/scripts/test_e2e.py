@@ -265,7 +265,7 @@ def _test_stats():
 
 
 def _test_token_estimate():
-    from hms.scripts.llm_analyzer import estimate_tokens
+    from hms.scripts.utils import estimate_tokens
     assert estimate_tokens("hello world") > 0
     assert estimate_tokens("你好世界测试") > estimate_tokens("hello test")
     assert estimate_tokens("") == 0
@@ -403,9 +403,10 @@ def _test_context_compose():
 
 
 def _test_token_est():
+    from hms.scripts.utils import estimate_tokens
     from hms.scripts.context_manager import ContextManager
-    assert ContextManager.estimate_tokens("hello world") > 0
-    assert ContextManager.estimate_tokens("你好世界") > 0
+    assert estimate_tokens("hello world") > 0
+    assert estimate_tokens("你好世界") > 0
     assert ContextManager.truncate_to_tokens("hello world", 1) != "hello world"
 
 

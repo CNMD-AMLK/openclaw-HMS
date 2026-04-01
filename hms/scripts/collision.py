@@ -8,10 +8,13 @@ Replaces v1's keyword-overlap approach with deep semantic analysis.
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any, Callable, Dict, List, Optional
 
 from .llm_analyzer import LLMAnalyzer
 from .embed_cache import EmbeddingCache, prefilter_for_collision
+
+logger = logging.getLogger(__name__)
 
 
 class CollisionEngine:
@@ -197,8 +200,8 @@ class CollisionEngine:
                         context=assoc.get("reason", ""),
                     )
                     report["graph_edges"] += 1
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug(f"Graph record failed: {e}")
 
         return report
 

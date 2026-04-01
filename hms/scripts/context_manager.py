@@ -25,6 +25,7 @@ from .file_utils import (
     safe_clear_jsonl,
     file_lock,
 )
+from .utils import estimate_tokens
 
 
 class ContextManager:
@@ -375,7 +376,7 @@ class ContextManager:
         mem_tokens = 0
         for mem in sorted_mems:
             formatted = self._format_memory(mem)
-            tokens = self.estimate_tokens(formatted)
+            tokens = estimate_tokens(formatted)
             if mem_tokens + tokens > budget["injected_memories"]:
                 break
             mem_texts.append(formatted)
@@ -387,7 +388,7 @@ class ContextManager:
         turn_tokens = 0
         for turn in reversed(recent_turns):
             line = f"用户: {turn.get('user', '')}\n助手: {turn.get('assistant', '')}"
-            tokens = self.estimate_tokens(line)
+            tokens = estimate_tokens(line)
             if turn_tokens + tokens > budget["recent_turns"]:
                 break
             turn_texts.insert(0, line)
@@ -398,10 +399,10 @@ class ContextManager:
         sys_text = self.truncate_to_tokens(system_prompt, budget["system_prompt"])
 
         total_est = (
-            self.estimate_tokens(sys_text)
-            + self.estimate_tokens(fp_text)
-            + self.estimate_tokens(tl_text)
-            + self.estimate_tokens(comp_text)
+            estimate_tokens(sys_text)
+            + estimate_tokens(fp_text)
+            + estimate_tokens(tl_text)
+            + estimate_tokens(comp_text)
             + mem_tokens
             + turn_tokens
         )
@@ -480,20 +481,11 @@ class ContextManager:
         return f"[重要度:{imp}] {text[:200]}"
 
     @staticmethod
-    def estimate_tokens(text: str) -> int:
-        """Rough token estimation: Chinese ~1.5 char/token, English ~4 char/token."""
-        if not text:
-            return 0
-        cn = sum(1 for c in text if "\u4e00" <= c <= "\u9fff")
-        en = len(text) - cn
-        return int(cn / 1.5 + en / 4)
-
-    @staticmethod
     def truncate_to_tokens(text: str, max_tokens: int) -> str:
         """Truncate text to approximately max_tokens at safe breakpoints."""
         if not text:
             return ""
-        est = ContextManager.estimate_tokens(text)
+        est = estimate_tokens(text)
         if est <= max_tokens:
             return text
         ratio = max_tokens / max(est, 1)
