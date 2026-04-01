@@ -56,7 +56,6 @@ class MemoryAdapter:
         # Dedup threshold
         self._dedup_threshold = self.cfg.get("dedup_similarity_threshold", 0.95)
         self._dedup_lock = threading.Lock()
-        self._dedup_lock = threading.Lock()
 
     def close(self) -> None:
         """Close the HTTP session and release connections."""

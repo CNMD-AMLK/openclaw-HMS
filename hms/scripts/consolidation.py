@@ -471,7 +471,7 @@ class ConsolidationEngine:
 # Negation words that truly negate the sentence meaning
 _NEGATION_PATTERNS = [
     re.compile(r'(?<![好不])不(?=[好是行对喜欢讨厌想要需要应该可以能会])'),
-    re.compile(r'没(?有)?(?[做去来看到听到知道]?)'),
+    re.compile(r'没有?(?:做|去|来|看到|听到|知道)?'),
     re.compile(r'无(?=[法效意义用关])'),
     re.compile(r'非(?=[法常])'),
     re.compile(r'未(?=[完成知])'),

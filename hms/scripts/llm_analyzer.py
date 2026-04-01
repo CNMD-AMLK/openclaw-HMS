@@ -85,14 +85,6 @@ class LLMAnalyzer:
         "HMS_GATEWAY_URL",
     }
 
-    # FIX: whitelist of allowed env keys to prevent malicious overrides
-    _ALLOWED_ENV_KEYS = {
-        "OPENCLAW_GATEWAY_URL",
-        "OPENAI_API_KEY",
-        "HMS_LLM_MODEL",
-        "HMS_GATEWAY_URL",
-    }
-
     @classmethod
     def _load_env(cls) -> None:
         """Load .env file if exists, with whitelist protection."""
