@@ -176,7 +176,7 @@ class MemoryAdapter:
 
 class MemoryManager:
     """
-    Main HMS v2 orchestrator. Ties all modules together.
+    Main HMS v3 orchestrator. Ties all modules together.
 
     Entry points:
       - on_message_received(): sync perception + context injection
@@ -222,6 +222,8 @@ class MemoryManager:
         cache_dir = self.cfg.get("cache_dir", "cache")
         self.embed_cache = EmbeddingCache({"cache_dir": cache_dir})
         self.collision_engine.set_embed_cache(self.embed_cache)
+        self.consolidation.set_embed_cache(self.embed_cache)
+        self.consolidation.set_embed_cache(self.embed_cache)
 
     @staticmethod
     def _apply_tier(cfg: Dict[str, Any], tier: str) -> Dict[str, Any]:
@@ -271,8 +273,8 @@ class MemoryManager:
 
         Returns context to inject into the agent's turn.
         """
-        # 1. Quick perception (heuristic mode for speed)
-        perception = self.perception.analyze(user_message, force_llm=False)
+        # 1. Quick perception (heuristic only — no LLM for sync path)
+        perception = self.perception.analyze(user_message, force_heuristic=True)
 
         # 2. Retrieve related memories
         retrieved = self.adapter.recall(

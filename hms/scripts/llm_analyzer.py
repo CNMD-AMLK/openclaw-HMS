@@ -9,9 +9,8 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import threading
-import re
-import re
 import time
 import logging
 
@@ -272,8 +271,7 @@ class LLMAnalyzer:
         """
         # Format existing memories compactly
         mem_lines = []
-        cap = len(existing_memories)
-        for i, mem in enumerate(existing_memories[:cap]):
+        for i, mem in enumerate(existing_memories):
             text = mem.get("text", "")[:200]
             mem_id = mem.get("id", f"mem_{i}")
             mem_lines.append(f"[{mem_id}] {text}")

@@ -28,6 +28,7 @@ class PerceptionEngine:
         assistant_reply: str = "",
         *,
         force_llm: bool = False,
+        force_heuristic: bool = False,
     ) -> Dict[str, Any]:
         """
         Analyze a conversation turn.
@@ -36,8 +37,12 @@ class PerceptionEngine:
           - "full": try LLM first, fallback to heuristic on failure
           - "lite": heuristic only (for high-throughput / sync path)
           - "llm_only": LLM only, return minimal dict on failure
+
+        Args:
+          force_llm: Skip heuristic, use LLM regardless of mode.
+          force_heuristic: Skip LLM, use heuristic regardless of mode.
         """
-        if self._mode == "lite":
+        if self._mode == "lite" or force_heuristic:
             return self._heuristic_result(user_message, assistant_reply)
 
         if self._mode == "llm_only" or force_llm:

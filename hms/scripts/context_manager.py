@@ -106,14 +106,12 @@ class ContextManager:
         This prevents duplicate processing when multiple consumers
         (e.g. process_pending + consolidate) run concurrently.
         """
-        import os as _os
-
-        if not _os.path.isfile(self._pending_path):
+        if not os.path.isfile(self._pending_path):
             return []
 
         entries = []
         with file_lock(self._pending_path):
-            if _os.path.isfile(self._pending_path):
+            if os.path.isfile(self._pending_path):
                 with open(self._pending_path, "r+", encoding="utf-8") as f:
                     for line in f:
                         line = line.strip()

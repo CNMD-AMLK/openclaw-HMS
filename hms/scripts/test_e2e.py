@@ -1,5 +1,5 @@
 """
-HMS v2 — End-to-End Test Suite.
+HMS v3 — End-to-End Test Suite.
 
 Validates the full pipeline: perception -> collision -> context -> consolidation -> forgetting.
 Tests both LLM and heuristic paths. LLM calls are mocked when no API key is available.

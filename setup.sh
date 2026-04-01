@@ -118,13 +118,13 @@ echo "============================================"
 echo ""
 echo "Run these commands to register HMS v3 with OpenClaw:"
 echo ""
-echo "# Register hooks"
-echo 'openclaw hook register message:received "python3 '"${HMS_DIR}"'/scripts/memory_manager.py received"'
-echo 'openclaw hook register before:compaction "python3 '"${HMS_DIR}"'/scripts/memory_manager.py process_pending"'
-echo ""
 echo "# Register cron jobs"
-echo 'openclaw cron add "0 3 * * *" "python3 '"${HMS_DIR}"'/scripts/memory_manager.py consolidate"'
-echo 'openclaw cron add "0 4 * * 0" "python3 '"${HMS_DIR}"'/scripts/memory_manager.py forget"'
+echo 'openclaw cron add --schedule "* * * * *" --command "python -m hms process_pending"'
+echo 'openclaw cron add --schedule "0 3 * * *" --command "python -m hms consolidate"'
+echo 'openclaw cron add --schedule "0 4 * * 0" --command "python -m hms forget"'
+echo ""
+echo "# Or use as a Python module in your skill/plugin:"
+echo "  from hms.hooks import on_message_received, on_message_sent"
 echo ""
 echo "============================================"
 echo "v3 Key Features"
