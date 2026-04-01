@@ -51,8 +51,13 @@ class MemoryAdapter:
         # Gateway URL: config > env var > default
         self._gateway_url = self.cfg.get(
             "gateway_url",
-            os.environ.get("OPENCLAW_GATEWAY_URL", "http://127.0.0.1:3578")
+            os.environ.get("OPENCLAW_GATEWAY_URL", "http://127.0.0.1:18789")
         )
+
+        # Gateway auth token
+        self._gateway_token = self.cfg.get("gateway_token", "")
+        if self._gateway_token:
+            self._session.headers["Authorization"] = f"Bearer {self._gateway_token}"
 
         # Dedup threshold
         self._dedup_threshold = self.cfg.get("dedup_similarity_threshold", 0.95)
@@ -96,7 +101,7 @@ class MemoryAdapter:
         # Check gateway reachability
         try:
             resp = self._session.get(
-                f"{self._gateway_url}/api/v1/health",
+                f"{self._gateway_url}/health",
                 timeout=5,
             )
             if resp.status_code == 200:
@@ -105,7 +110,37 @@ class MemoryAdapter:
             result["errors"].append(f"Gateway unreachable: {e}")
             return result
 
-        # Check memory API
+        # Check memory API — these are internal plugin endpoints, may not be exposed via HTTP
+        try:
+            resp = self._session.post(
+                f"{self._gateway_url}/api/tools/memory-recall",
+                json={"query": "health", "top_k": 1},
+                timeout=5,
+            )
+            if resp.status_code in (200, 400, 422):
+                result["memory_api_available"] = True
+            else:
+                result["errors"].append(f"Memory API returned HTTP {resp.status_code}")
+        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
+            result["errors"].append(f"Memory API error: {e}")
+
+        # Check graph API
+        try:
+            resp = self._session.post(
+                f"{self._gateway_url}/api/tools/gm-search",
+                json={"query": "health", "depth": 1},
+                timeout=5,
+            )
+            if resp.status_code in (200, 400, 422):
+                result["graph_api_available"] = True
+            else:
+                result["errors"].append(f"Graph API returned HTTP {resp.status_code}")
+        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
+            result["errors"].append(f"Graph API error: {e}")
+
+        return result
+
+        # Check memory API — these are internal plugin endpoints, may not be exposed via HTTP
         try:
             resp = self._session.post(
                 f"{self._gateway_url}/api/tools/memory-recall",

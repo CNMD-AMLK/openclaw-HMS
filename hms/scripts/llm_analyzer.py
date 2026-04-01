@@ -46,8 +46,16 @@ class LLMAnalyzer:
         self._budget_reset = self._midnight_utc()
 
         # Gateway configuration
-        self._gateway_url = self.cfg.get("gateway_url", "http://127.0.0.1:3578")
+        self._gateway_url = self.cfg.get("gateway_url", "http://127.0.0.1:18789")
+        self._gateway_token = self.cfg.get("gateway_token", "")
+        self._model = self.cfg.get("llm_model", "openclaw")
         self._session = requests.Session()
+        # Set auth header if token is provided
+        if self._gateway_token:
+            self._session.headers["Authorization"] = f"Bearer {self._gateway_token}"
+        # Set auth header if token is provided
+        if self._gateway_token:
+            self._session.headers["Authorization"] = f"Bearer {self._gateway_token}"
 
         # Load .env file if not already loaded (thread-safe)
         if not LLMAnalyzer._env_loaded:
@@ -256,7 +264,7 @@ class LLMAnalyzer:
         }
 
         resp = self._session.post(
-            f"{self._gateway_url}/api/v1/chat/completions",
+            f"{self._gateway_url}/v1/chat/completions",
             json=payload,
             timeout=self._timeout,
         )
@@ -294,7 +302,7 @@ class LLMAnalyzer:
         # Check gateway reachability
         try:
             resp = self._session.get(
-                f"{self._gateway_url}/api/v1/health",
+                f"{self._gateway_url}/health",
                 timeout=5,
             )
             if resp.status_code == 200:
@@ -306,7 +314,7 @@ class LLMAnalyzer:
         # Check chat API
         try:
             resp = self._session.post(
-                f"{self._gateway_url}/api/v1/chat/completions",
+                f"{self._gateway_url}/v1/chat/completions",
                 json={
                     "model": self._model,
                     "messages": [{"role": "user", "content": "hi"}],
