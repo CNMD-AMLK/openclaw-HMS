@@ -83,6 +83,33 @@ class MemoryBelief:
             self.strength = BeliefStrength.CONTRADICTED
         return self.confidence
 
+    def update_confidence_laplace(self) -> float:
+        """Update confidence with Laplace smoothing to avoid overconfidence from sparse evidence."""
+        ev = len(self.evidence)
+        con = len(self.contradictions)
+        total = ev + con
+        if total == 0:
+            self.confidence = 0.5
+        else:
+            self.confidence = (ev + 1) / (total + 2)
+        strength_mult = {
+            BeliefStrength.CERTAIN: 1.0,
+            BeliefStrength.LIKELY: 0.8,
+            BeliefStrength.UNCERTAIN: 0.5,
+            BeliefStrength.CONTRADICTED: 0.1,
+        }
+        self.confidence = round(min(1.0, self.confidence * strength_mult[self.strength]), 4)
+        self.last_evaluated = datetime.now(timezone.utc)
+        if self.confidence >= 0.9:
+            self.strength = BeliefStrength.CERTAIN
+        elif self.confidence >= 0.6:
+            self.strength = BeliefStrength.LIKELY
+        elif self.confidence >= 0.3:
+            self.strength = BeliefStrength.UNCERTAIN
+        else:
+            self.strength = BeliefStrength.CONTRADICTED
+        return self.confidence
+
 
 @dataclass
 class EmotionalTrace:

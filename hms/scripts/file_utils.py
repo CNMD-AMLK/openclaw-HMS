@@ -1,10 +1,11 @@
 """
-HMS v2 — File utilities for safe concurrent access.
+HMS v3 — File utilities for safe concurrent access.
 
 Provides:
   - Atomic JSON write (write tmp + os.replace)
   - File-level locking via fcntl (Linux) / fallback no-op (Windows)
   - Safe JSONL append
+  - Cached lock file descriptors for reduced I/O overhead
 """
 
 from __future__ import annotations
@@ -16,22 +17,30 @@ import tempfile
 from contextlib import contextmanager
 from typing import Any, Dict, List
 
+_lock_fds: Dict[str, int] = {}
+
+
+def _get_lock_fd(path: str) -> int:
+    """Get or create a cached lock file descriptor for the given path."""
+    if path not in _lock_fds:
+        lock_path = path + ".lock"
+        os.makedirs(os.path.dirname(lock_path) or ".", exist_ok=True)
+        _lock_fds[path] = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o644)
+    return _lock_fds[path]
+
 
 @contextmanager
 def file_lock(path: str, mode: str = "exclusive"):
     """
-    File-level lock using fcntl.flock.
+    File-level lock using fcntl.flock with cached lock FD.
     Yields the lock file descriptor. Releases on exit.
     """
-    lock_path = path + ".lock"
-    os.makedirs(os.path.dirname(lock_path) or ".", exist_ok=True)
-    fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o644)
+    fd = _get_lock_fd(path)
     try:
         fcntl.flock(fd, fcntl.LOCK_EX)
         yield fd
     finally:
         fcntl.flock(fd, fcntl.LOCK_UN)
-        os.close(fd)
 
 
 def atomic_write_json(path: str, data: Any) -> None:
@@ -44,7 +53,6 @@ def atomic_write_json(path: str, data: Any) -> None:
             json.dump(data, f, ensure_ascii=False, indent=2)
         os.replace(tmp_path, path)
     except BaseException:
-        # Clean up tmp file on failure (catches BaseException to handle KeyboardInterrupt too)
         try:
             os.unlink(tmp_path)
         except OSError:

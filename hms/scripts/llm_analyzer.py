@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import threading
 import time
 import logging
@@ -264,7 +265,8 @@ class LLMAnalyzer:
         """
         # Format existing memories compactly
         mem_lines = []
-        for i, mem in enumerate(existing_memories[:10]):  # cap at 10
+        cap = len(existing_memories)
+        for i, mem in enumerate(existing_memories[:cap]):
             text = mem.get("text", "")[:200]
             mem_id = mem.get("id", f"mem_{i}")
             mem_lines.append(f"[{mem_id}] {text}")
@@ -352,15 +354,14 @@ class LLMAnalyzer:
     def fallback_perceive(user_message: str, assistant_reply: str = "") -> Dict[str, Any]:
         """
         Lightweight heuristic fallback — no LLM required.
-        Much simpler than v1 but always available.
+        Uses regex patterns for more robust intent detection.
         """
         text = user_message + " " + assistant_reply
+        msg = user_message.strip()
 
-        # Simple importance scoring
         importance = 4
         high_signals = ["决定", "必须", "永远", "关键", "核心", "禁忌"]
         mid_signals = ["计划", "方案", "确认", "重要", "任务"]
-        low_signals = ["嗯", "好的", "行", "哈哈", "ok", "OK"]
 
         for s in high_signals:
             if s in user_message:
@@ -372,21 +373,21 @@ class LLMAnalyzer:
                     importance = 7
                     break
             else:
-                for s in low_signals:
-                    if user_message.strip().startswith(s):
-                        importance = 2
-                        break
+                casual_patterns = re.compile(
+                    r'^(嗯|好的|行|哈哈|ok|OK|哦|好|知道了|明白|了解了)',
+                    re.IGNORECASE,
+                )
+                if casual_patterns.match(msg) and len(msg) <= 8:
+                    importance = 2
 
-        # Simple intent
         intent = "陈述"
         if "?" in user_message or "？" in user_message:
             intent = "提问"
-        elif any(w in user_message for w in ["帮我", "请", "能不能"]):
+        elif re.match(r'^(帮我|请|能不能|能否|可以|麻烦|帮我一下)', msg):
             intent = "请求"
-        elif any(w in user_message for w in ["执行", "运行", "创建", "删除"]):
+        elif re.match(r'^(执行|运行|创建|删除|打开|关闭|安装|卸载)', msg):
             intent = "指令"
 
-        # Simple category
         category = "fact"
         if any(w in user_message for w in ["我喜欢", "我偏好", "我习惯"]):
             category = "preference"

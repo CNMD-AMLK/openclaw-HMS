@@ -35,13 +35,26 @@ class PerceptionEngine:
 
         Modes:
           - "full": always try LLM, fallback to heuristic
-          - "lite": heuristic only (for high-throughput scenarios)
+          - "lite": heuristic only (for high-throughput / sync path)
           - "llm_only": LLM only, return None-like on failure
         """
         if self._mode == "lite" and not force_llm:
-            return self.llm.fallback_perceive(user_message, assistant_reply)
+            result = self.llm.fallback_perceive(user_message, assistant_reply)
+            result["analysis_method"] = "heuristic"
+            result["text_for_store"] = self._build_store_text(
+                user_message, assistant_reply, result
+            )
+            return result
 
-        # Try LLM first
+        if not force_llm:
+            result = self.llm.fallback_perceive(user_message, assistant_reply)
+            result["analysis_method"] = "heuristic"
+            result["text_for_store"] = self._build_store_text(
+                user_message, assistant_reply, result
+            )
+            return result
+
+        # LLM-only path (async / process_pending)
         result = self.llm.perceive(user_message, assistant_reply)
         if result:
             result["analysis_method"] = "llm"
@@ -49,15 +62,6 @@ class PerceptionEngine:
                 user_message, assistant_reply, result
             )
             return result
-
-        # Fallback
-        if self._mode != "llm_only":
-            fallback = self.llm.fallback_perceive(user_message, assistant_reply)
-            fallback["analysis_method"] = "heuristic"
-            fallback["text_for_store"] = self._build_store_text(
-                user_message, assistant_reply, fallback
-            )
-            return fallback
 
         return {
             "should_remember": False,

@@ -93,7 +93,11 @@ class CollisionEngine:
         new_perception: Dict[str, Any],
         retrieved: List[Dict[str, Any]],
     ) -> Dict[str, Any]:
-        """Lightweight heuristic collision when LLM is unavailable."""
+        """Lightweight heuristic collision when LLM is unavailable.
+
+        Uses negation detection + simple sentiment polarity word lists
+        to reduce false-positive reinforcements.
+        """
         contradictions = []
         reinforcements = []
         associations = []
@@ -106,12 +110,38 @@ class CollisionEngine:
             else:
                 new_entities.add(str(e).lower())
 
+        sentiment_positive = {
+            "喜欢", "爱", "好", "优秀", "棒", "赞", "推荐", "偏好", "习惯",
+            "love", "like", "prefer", "great", "good", "best", "excellent",
+            "快", "强", "高效", "方便", "满意",
+        }
+        sentiment_negative = {
+            "讨厌", "差", "烂", "慢", "糟", "垃圾", "恶心", "烦", "不喜欢",
+            "hate", "dislike", "bad", "worst", "terrible", "awful", "slow",
+            "讨厌", "反感", "不爽",
+        }
+        negation_words = [
+            "不", "没", "无", "非", "未", "否", "别", "莫", "勿",
+            "never", "not", "no", "neither", "nor", "n't",
+            "without", "cannot", "can't", "don't", "doesn't", "didn't",
+            "won't", "wouldn't", "shouldn't", "couldn't", "isn't", "aren't",
+            "wasn't", "weren't", "haven't", "hasn't", "hadn't",
+        ]
+        contradiction_patterns = [
+            "但是", "然而", "却", "反而", "相反", "其实", "实际上",
+            "but", "however", "actually", "instead", "contrary",
+        ]
+
+        def detect_sentiment(text: str) -> int:
+            pos = sum(1 for w in sentiment_positive if w in text)
+            neg = sum(1 for w in sentiment_negative if w in text)
+            return pos - neg
+
         for mem in retrieved:
             mem_id = mem.get("id", "")
             mem_text = (mem.get("text", "") or "").lower()
             mem_meta = mem.get("metadata") or {}
 
-            # Extract entities from metadata
             mem_entities = set()
             for e in mem_meta.get("entities", []):
                 mem_entities.add(str(e).lower())
@@ -120,38 +150,27 @@ class CollisionEngine:
             if not shared:
                 continue
 
-            # Simple negation detection
-            negation_words = [
-                "不", "没", "无", "非", "未", "否", "别", "莫", "勿",
-                "never", "not", "no", "neither", "nor", "n't",
-                "without", "cannot", "can't", "don't", "doesn't", "didn't",
-                "won't", "wouldn't", "shouldn't", "couldn't", "isn't", "aren't",
-                "wasn't", "weren't", "haven't", "hasn't", "hadn't",
-            ]
-            contradiction_patterns = [
-                "但是", "然而", "却", "反而", "相反", "其实", "实际上",
-                "but", "however", "actually", "instead", "contrary",
-            ]
             new_neg = any(w in new_text for w in negation_words) or any(p in new_text for p in contradiction_patterns)
             mem_neg = any(w in mem_text for w in negation_words) or any(p in mem_text for p in contradiction_patterns)
 
-            if new_neg != mem_neg:
-                # Potential contradiction
+            new_sentiment = detect_sentiment(new_text)
+            mem_sentiment = detect_sentiment(mem_text)
+            sentiment_opposite = (new_sentiment > 0 and mem_sentiment < 0) or (new_sentiment < 0 and mem_sentiment > 0)
+
+            if new_neg != mem_neg or sentiment_opposite:
                 contradictions.append({
                     "existing_id": mem_id,
                     "severity": "medium",
-                    "reason": "negation_mismatch",
+                    "reason": "negation_mismatch" if new_neg != mem_neg else "sentiment_opposite",
                     "suggestion": "review",
                 })
             else:
-                # Potential reinforcement
                 reinforcements.append({
                     "existing_id": mem_id,
                     "confidence_delta": 0.05,
                     "reason": f"shared entities: {', '.join(list(shared)[:2])}",
                 })
 
-            # Association
             associations.append({
                 "existing_id": mem_id,
                 "relation_type": "co_mentioned",

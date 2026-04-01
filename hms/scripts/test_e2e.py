@@ -80,7 +80,7 @@ def mock_llm_call(prompt, max_tokens=1000, temperature=0.1):
 
 
 def run_tests():
-    """Run all HMS v2 self-tests."""
+    """Run all HMS v3 self-tests."""
     passed = 0
     failed = 0
     errors = []
@@ -98,7 +98,7 @@ def run_tests():
             print(f"  FAIL {name}: {err_str}")
 
     print("=" * 60)
-    print("HMS v2 -- End-to-End Test Suite")
+    print("HMS v3 -- End-to-End Test Suite")
     print("=" * 60)
     print()
 
@@ -142,7 +142,9 @@ def run_tests():
     # --- Context Manager ---
     print("[Context Manager]")
     test("Pending queue", _test_pending_queue)
+    test("Pop all pending (atomic)", _test_pop_all_pending)
     test("Fingerprint CRUD", _test_fp_crud)
+    test("Fingerprint cap", _test_fp_cap)
     test("Timeline CRUD", _test_timeline_crud)
     test("Context composition", _test_context_compose)
     test("Token estimation", _test_token_est)
@@ -154,11 +156,13 @@ def run_tests():
     test("Replay selection", _test_replay_select)
     test("Conversation compression", _test_compress)
     test("Relation discovery", _test_relations)
+    test("Fallback general topic", _test_fallback_general)
     print()
 
     # --- Forgetting ---
     print("[Forgetting Engine]")
     test("Access tracking", _test_forget_access)
+    test("Dirty flag batching", _test_forget_dirty_flag)
     test("Strength calculation", _test_forget_strength)
     test("Immortal guard", _test_immortal)
     test("Consistency sync", _test_forget_sync)
@@ -364,6 +368,29 @@ def _test_pending_queue():
         assert cm.get_pending_count() == 0
 
 
+def _test_pop_all_pending():
+    with tempfile.TemporaryDirectory() as d:
+        from hms.scripts.context_manager import ContextManager
+        cm = ContextManager({"pending_path": os.path.join(d, "p.jsonl")})
+        cm.enqueue("a", "b")
+        cm.enqueue("c", "d")
+        entries = cm.pop_all_pending()
+        assert len(entries) == 2
+        assert cm.get_pending_count() == 0
+        entries2 = cm.pop_all_pending()
+        assert len(entries2) == 0
+
+
+def _test_fp_cap():
+    with tempfile.TemporaryDirectory() as d:
+        from hms.scripts.context_manager import ContextManager
+        cm = ContextManager({"pending_path": os.path.join(d, "p.jsonl")})
+        for i in range(15):
+            cm.update_fingerprint({"thinking_patterns": [f"pattern_{i}"]})
+        fp = cm.get_fingerprint()
+        assert len(fp.get("thinking_patterns", [])) <= 10
+
+
 def _test_fp_crud():
     with tempfile.TemporaryDirectory() as d:
         from hms.scripts.context_manager import ContextManager
@@ -452,6 +479,15 @@ def _test_relations():
     assert len(rels) >= 1
 
 
+def _test_fallback_general():
+    from hms.scripts.consolidation import ConsolidationEngine
+    e = ConsolidationEngine()
+    convs = [{"user": "今天心情不错", "assistant": "很高兴听到这个"}]
+    r = e.compress_conversations(convs)
+    assert r is not None
+    assert "general" in r.get("topics", [])
+
+
 def _test_forget_access():
     import tempfile
     path = tempfile.mktemp(suffix=".json")
@@ -460,6 +496,27 @@ def _test_forget_access():
         fe = ForgettingEngine({"decay_cache_path": path})
         fe.update_on_access("m1")
         assert "m1" in fe._states
+        assert fe._dirty is True
+    finally:
+        if os.path.exists(path):
+            os.unlink(path)
+
+
+def _test_forget_dirty_flag():
+    import tempfile
+    path = tempfile.mktemp(suffix=".json")
+    try:
+        from hms.scripts.forgetting import ForgettingEngine
+        fe = ForgettingEngine({"decay_cache_path": path})
+        fe.update_on_access("m1")
+        assert fe._dirty is True
+        fe.flush()
+        assert fe._dirty is False
+        fe.update_on_access("m2")
+        assert fe._dirty is True
+        fe.flush()
+        assert fe._dirty is False
+        assert "m2" in fe._states
     finally:
         if os.path.exists(path):
             os.unlink(path)

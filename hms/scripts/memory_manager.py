@@ -44,6 +44,7 @@ class MemoryAdapter:
     def __init__(self, config: Optional[Dict[str, Any]] = None, tool_impl: Optional[Dict[str, Callable]] = None) -> None:
         self.cfg = config or {}
         self._tools = tool_impl or {}
+        self._session = requests.Session()
         
         # Gateway URL: config > env var > default
         self._gateway_url = self.cfg.get(
@@ -52,9 +53,9 @@ class MemoryAdapter:
         )
 
     def _call_gateway_api(self, endpoint: str, payload: Dict[str, Any]) -> Any:
-        """Call OpenClaw Gateway internal API via HTTP POST."""
+        """Call OpenClaw Gateway internal API via HTTP POST with connection pooling."""
         url = f"{self._gateway_url}{endpoint}"
-        resp = requests.post(url, json=payload, timeout=self.GATEWAY_TIMEOUT)
+        resp = self._session.post(url, json=payload, timeout=self.GATEWAY_TIMEOUT)
         resp.raise_for_status()
         return resp.json()
 
@@ -323,7 +324,7 @@ class MemoryManager:
             "errors": [],
         }
 
-        entries = self.context.read_pending()
+        entries = self.context.pop_all_pending()
         if not entries:
             return report
 
@@ -334,7 +335,6 @@ class MemoryManager:
             except Exception as e:
                 report["errors"].append(f"entry: {e}")
 
-        self.context.clear_pending()
         return report
 
     def _process_single_entry(

@@ -99,6 +99,24 @@ class ContextManager:
         """Read all pending entries without clearing."""
         return safe_read_jsonl(self._pending_path)
 
+    def pop_all_pending(self) -> List[Dict[str, Any]]:
+        """Atomically read and clear all pending entries.
+
+        Reads the file under lock, then truncates it before returning.
+        This prevents duplicate processing when multiple consumers
+        (e.g. process_pending + consolidate) run concurrently.
+        """
+        import os as _os
+
+        if not _os.path.isfile(self._pending_path):
+            return []
+
+        with file_lock(self._pending_path):
+            entries = safe_read_jsonl(self._pending_path)
+            if entries:
+                safe_clear_jsonl(self._pending_path)
+        return entries
+
     def clear_pending(self) -> None:
         """Truncate the pending file."""
         safe_clear_jsonl(self._pending_path)
@@ -119,37 +137,45 @@ class ContextManager:
         return self._fingerprint
 
     def update_fingerprint(self, new_fingerprint: Dict[str, Any]) -> None:
-        """Merge new fingerprint data into existing."""
+        """Merge new fingerprint data into existing.
+
+        Each list field has a maximum capacity; oldest entries are evicted
+        when the cap is exceeded to prevent unbounded growth.
+        """
+        list_caps = self.cfg.get("fingerprint_list_caps", {
+            "thinking_patterns": 10,
+            "core_preferences": 10,
+            "focus_areas": 10,
+            "values": 10,
+            "recent_goals": 5,
+        })
+        trigger_caps = self.cfg.get("fingerprint_trigger_caps", 10)
+
         if not self._fingerprint:
             self._fingerprint = new_fingerprint
         else:
-            # Merge lists by appending new items
-            for key in [
-                "thinking_patterns",
-                "core_preferences",
-                "focus_areas",
-                "values",
-                "recent_goals",
-            ]:
-                existing = set(self._fingerprint.get(key, []))
+            for key, cap in list_caps.items():
+                existing = list(dict.fromkeys(self._fingerprint.get(key, [])))
                 for item in new_fingerprint.get(key, []):
                     if item not in existing:
-                        self._fingerprint.setdefault(key, []).append(item)
+                        existing.append(item)
+                if len(existing) > cap:
+                    existing = existing[-cap:]
+                self._fingerprint[key] = existing
 
-            # Merge emotional triggers
             for valence in ["positive", "negative"]:
-                existing = set(
+                existing = list(dict.fromkeys(
                     self._fingerprint.get("emotional_triggers", {}).get(valence, [])
-                )
+                ))
                 for item in (
                     new_fingerprint.get("emotional_triggers", {}).get(valence, [])
                 ):
                     if item not in existing:
-                        self._fingerprint.setdefault("emotional_triggers", {}).setdefault(
-                            valence, []
-                        ).append(item)
+                        existing.append(item)
+                if len(existing) > trigger_caps:
+                    existing = existing[-trigger_caps:]
+                self._fingerprint.setdefault("emotional_triggers", {})[valence] = existing
 
-            # Overwrite scalar fields
             for key in ["communication_style", "personality_notes"]:
                 if new_fingerprint.get(key):
                     self._fingerprint[key] = new_fingerprint[key]

@@ -30,6 +30,7 @@ class ForgettingEngine:
         self.cfg = config or {}
         self._cache_path = self.cfg.get("decay_cache_path", "cache/decay_state.json")
         self._states: Dict[str, Dict[str, Any]] = {}
+        self._dirty = False
         self._base_threshold = self.cfg.get("forget_base_threshold", 0.15)
         self._emotion_slowdown = self.cfg.get("emotion_decay_slowdown_factor", 2.0)
         self._reinforce_delta = self.cfg.get("reinforcement_confidence_delta", 0.05)
@@ -51,7 +52,10 @@ class ForgettingEngine:
     # ==================================================================
 
     def update_on_access(self, memory_id: str) -> None:
-        """Call on every memory_recall hit."""
+        """Call on every memory_recall hit.
+
+        Only marks the state dirty; caller must flush() periodically.
+        """
         now = datetime.now(timezone.utc).isoformat()
         s = self._states.get(memory_id)
         if s:
@@ -69,10 +73,13 @@ class ForgettingEngine:
                 "belief_confidence": 0.5,
                 "related_count": 0,
             }
-        self.save_decay_state()
+        self._dirty = True
 
     def update_on_reinforce(self, memory_id: str) -> None:
-        """Call on every collision reinforcement."""
+        """Call on every collision reinforcement.
+
+        Only marks the state dirty; caller must flush() periodically.
+        """
         s = self._states.get(memory_id)
         if s:
             s["times_reinforced"] = s.get("times_reinforced", 0) + 1
@@ -88,7 +95,14 @@ class ForgettingEngine:
                 "belief_confidence": 0.5,
                 "related_count": 0,
             }
-        self.save_decay_state()
+        self._dirty = True
+
+    def flush(self) -> None:
+        """Persist decay state to disk if dirty."""
+        if self._dirty:
+            self.save_decay_state()
+            self._dirty = False
+            self._dirty = False
 
     # ==================================================================
     # Strength calculation (uses DecayState from models.py)
@@ -152,14 +166,20 @@ class ForgettingEngine:
 
     @staticmethod
     def _is_immortal(mem: Dict[str, Any]) -> bool:
-        """Memories that should never be forgotten."""
+        """Memories that should never be forgotten.
+
+        Requires a minimum evidence threshold to avoid single-point memories
+        from becoming immortal due to overconfident scoring.
+        """
         importance = mem.get("importance", 0)
         if importance >= 9:
             return True
         meta = mem.get("metadata") or {}
-        if meta.get("belief_strength") == "certain" and meta.get("belief_confidence", 0) >= 0.95:
+        belief_confidence = meta.get("belief_confidence", 0)
+        belief_strength = meta.get("belief_strength", "")
+        evidence_count = len(meta.get("derived_from", [])) or len(meta.get("evidence", []))
+        if belief_strength == "certain" and belief_confidence >= 0.95 and evidence_count >= 3:
             return True
-        # Cognitive fingerprint entries
         if meta.get("source") == "consolidated" and meta.get("memory_type") == "semantic":
             return True
         return False

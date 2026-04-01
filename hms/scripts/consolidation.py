@@ -176,7 +176,6 @@ class ConsolidationEngine:
         key_decisions: list[str] = []
         preferences: list[str] = []
 
-        # Common tech terms for entity extraction
         tech_terms = [
             "Python", "Java", "JavaScript", "TypeScript", "Go", "Rust", "C++", "C#",
             "Docker", "Kubernetes", "K8s", "Git", "GitHub", "GitLab",
@@ -186,7 +185,6 @@ class ConsolidationEngine:
             "VS Code", "Vim", "Emacs", "IntelliJ", "PyCharm",
         ]
 
-        # Topic keywords mapping
         topic_keywords = {
             "编程": ["代码", "编程", "开发", "程序", "函数", "bug", "error"],
             "运维": ["部署", "服务器", "docker", "k8s", "运维", "监控"],
@@ -205,25 +203,26 @@ class ConsolidationEngine:
             user = turn.get("user", "")
             assistant = turn.get("assistant", "")
             
-            # Extract summary
             if len(user) > 10:
                 summaries.append(f"用户问: {user[:80]}")
             
             combined_text = user + " " + assistant
             
-            # Extract entities
             for term in tech_terms:
                 if term.lower() in combined_text.lower():
                     all_entities.add(term)
             
-            # Extract topics
+            matched_topic = False
             for topic, keywords in topic_keywords.items():
                 for kw in keywords:
                     if kw in combined_text.lower():
                         all_topics.add(topic)
+                        matched_topic = True
                         break
             
-            # Extract decisions
+            if not matched_topic:
+                all_topics.add("general")
+            
             for marker in decision_markers:
                 if marker in user:
                     sentences = user.split("。")
@@ -232,7 +231,6 @@ class ConsolidationEngine:
                             key_decisions.append(sent.strip()[:100])
                             break
             
-            # Extract preferences
             for marker in pref_markers:
                 if marker in user:
                     sentences = user.split("。")

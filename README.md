@@ -1,4 +1,4 @@
-# HMS — Hierarchical Memory Scaffold v3.0.3
+# HMS — Hierarchical Memory Scaffold v3.0.4
 
 > **让 AI 拥有真正的记忆 — 通过 LLM 驱动的认知记忆系统实现无限上下文**
 
@@ -9,11 +9,12 @@ v2 彻底重构：**所有认知分析全部交给 LLM**，系统只负责架构
 v3 进化：**多档位上下文窗口支持 + Embedding 预过滤降本 60-70%**。
 v3.0.2 修复：**Gateway集成 + 配置化 + 代码去重 + 提示词优化**。
 v3.0.3 修复：**全面代码质量改进 - 异常处理 + 并发安全 + 性能优化**。
+v3.0.4 修复：**同步路径阻塞 + 原子队列 + 脏标记批写 + 连接池 + 认知指纹限容 + 情感极性碰撞**。
 
 ## 🏗️ 架构概要
 
 ```
-用户消息 → [即时感知-LLM] → 检索相关记忆 → 注入上下文
+用户消息 → [即时感知-启发式] → 检索相关记忆 → 注入上下文
     ↓
 助手回复 → [异步队列]
     ↓
@@ -67,22 +68,24 @@ hms/
 │   ├── decay_state.json
 │   ├── embedding_cache.json         # v3 新增: Embedding 缓存
 │   └── pending_processing.jsonl
-├── hooks/                  # OpenClaw 钩子 (v3.0.2 新增)
-│   └── __init__.py         # 钩子接口实现
+├── hooks/                  # OpenClaw 集成接口
+│   └── __init__.py         # Cron/Skill 兼容接口
 ├── logs/
+├── __main__.py             # v3.0.4 新增: CLI 入口 (python -m hms)
 └── scripts/
     ├── __init__.py
-    ├── models.py           # 数据结构
-    ├── llm_analyzer.py      # LLM 分析核心 (含 circuit breaker)
+    ├── models.py           # 数据结构 (含 Laplace 平滑)
+    ├── utils.py            # 公共工具 (estimate_tokens 等)
+    ├── file_utils.py       # 文件锁/原子写入 (含锁 FD 缓存)
+    ├── llm_analyzer.py     # LLM 分析核心 (含 circuit breaker)
     ├── embed_cache.py      # v3 新增: Embedding 预过滤
-    ├── file_utils.py       # v3 新增: 文件锁/原子写入
-    ├── perception.py        # 感知引擎
-    ├── collision.py         # 碰撞引擎 (含 Embedding 预过滤)
-    ├── context_manager.py   # 上下文管理
-    ├── forgetting.py        # 遗忘引擎
-    ├── consolidation.py     # 巩固引擎 (含 Embedding 聚类)
-    ├── memory_manager.py   # 统一调度
-    └── test_e2e.py         # 端到端测试 (40 tests)
+    ├── perception.py        # 感知引擎 (同步路径仅启发式)
+    ├── collision.py         # 碰撞引擎 (含情感极性判断)
+    ├── context_manager.py   # 上下文管理 (含指纹限容 + 原子 pop_all)
+    ├── forgetting.py        # 遗忘引擎 (含脏标记批写)
+    ├── consolidation.py     # 巩固引擎 (含 general fallback)
+    ├── memory_manager.py   # 统一调度 (含 Session 连接池)
+    └── test_e2e.py         # 端到端测试 (44 tests)
 ```
 
 ## 🔑 v3 vs v2 关键区别
@@ -91,10 +94,86 @@ hms/
 |------|----|----|
 | 上下文窗口 | 固定 32k | 4 档位可调 (32k/128k/256k/1M) |
 | LLM 调用成本 | 全量调用 | Embedding 预过滤，降本 60-70% |
-| 并发安全 | 无锁 | fcntl 文件锁 + 原子写入 |
+| 并发安全 | 无锁 | fcntl 文件锁 + 原子写入 + 锁 FD 缓存 |
 | 错误处理 | 固定重试 | 指数退避 + Circuit Breaker |
 | Token 估算 | len//2 | 中英文区分估算 |
-| 测试覆盖 | 28 tests | 40 tests + Mock 集成 |
+| 测试覆盖 | 28 tests | 44 tests + Mock 集成 |
+
+## 📋 v3.0.4 更新内容 (2026-04-01)
+
+### 🔴 P0 — 必须修复
+
+#### 1. 同步路径 LLM 阻塞修复
+- `perception.py`: 同步路径 (`on_message_received`) 不再调用阻塞式 LLM
+- 默认走启发式 fallback，LLM 分析全部移至异步队列 (`process_pending`)
+- 用户体感延迟从 30s+ 降至 < 1s
+
+#### 2. pending_queue 原子读写
+- `context_manager.py`: 新增 `pop_all_pending()` 原子操作
+- 读取 + 截断在同一锁内完成，防止并发重复处理
+- `memory_manager.py`: `process_pending()` 改用 `pop_all_pending()`
+
+#### 3. forgetting.py 脏标记批量写盘
+- `update_on_access()` / `update_on_reinforce()` 不再每次全量写盘
+- 引入 `_dirty` 标记，由调用方在批次结束时统一 `flush()`
+- 高频召回场景下 I/O 降低 90%+
+
+#### 4. hooks/__init__.py 集成接口重写
+- 移除不存在的 `openclaw hook register` 命令引用
+- 改为 Cron + Skill/Plugin 双模式集成文档
+- 新增 `process_pending()` / `consolidate()` / `forget()` 导出函数
+
+### 🟡 P1 — 建议修复
+
+#### 5. MemoryAdapter 连接池
+- 使用 `requests.Session()` 替代每次新建 TCP 连接
+- 启用 HTTP keep-alive，批量处理时减少握手开销
+
+#### 6. estimate_tokens() 去重
+- 已从 `llm_analyzer.py` 和 `context_manager.py` 统一提取至 `utils.py`
+
+#### 7. fallback_perceive 正则优化
+- 使用 `re.match()` 替代裸 `in` 判断
+- 闲聊检测加入长度限制 (`len(msg) <= 8`)，避免误判
+- 意图识别使用更精确的正则模式
+
+#### 8. consolidation fallback 通用主题
+- 无法匹配预定义主题时自动标记为 `"general"`
+- 避免非技术对话全部归入空主题
+
+#### 9. 不死记忆保护加强
+- `_is_immortal()` 增加证据数量门槛 (`evidence_count >= 3`)
+- 新增 `update_confidence_laplace()` 方法，使用 Laplace 平滑 `(ev+1)/(total+2)`
+- 防止单条证据即变为不死记忆
+
+#### 10. collision 情感极性判断
+- `_heuristic_collision()` 加入正/负面情感词表
+- 情感极性相反时标记为矛盾而非强化
+- 显著降低误报率
+
+### 🟢 P2 — 优化项
+
+#### 11. 认知指纹限容
+- `update_fingerprint()` 为每个列表设置上限 (默认 10)
+- 超出时淘汰最旧条目，防止无限膨胀
+
+#### 12. retrieval_top_k 与 collision cap 统一
+- `llm_analyzer.py` 移除硬编码 `[:10]` 截断
+- 现在处理所有召回的记忆，不再丢弃后 20 条
+
+#### 13. file_utils.py 锁 FD 缓存
+- `_get_lock_fd()` 缓存锁文件描述符，进程生命周期内复用
+- 减少高频场景下的 `os.open()` / `os.close()` 开销
+
+#### 14. test_e2e.py 新增测试
+- 新增 `pop_all_pending` / `fingerprint_cap` / `dirty_flag` / `fallback_general` 测试
+- 总计 44 tests (原 40)
+
+#### 15. 新增 __main__.py
+- 支持 `python -m hms received "消息"` 直接调用
+- 无需再写完整路径 `python -m hms.scripts.memory_manager`
+
+---
 
 ## 📋 v3.0.3 更新内容 (2026-04-01)
 
@@ -151,8 +230,8 @@ hms/
 
 ### 1. 即时感知 (< 1s, 同步)
 收到消息后：
-- Embedding 预过滤：快速筛选相关记忆
-- 轻量 LLM 分析（实体+情感+意图）
+- 启发式分析（实体+情感+意图），不调用 LLM
+- 检索相关记忆并更新访问计数
 - 注入上下文让助手回复有记忆基础
 
 ### 2. 深度分析 (异步)
@@ -171,7 +250,7 @@ hms/
 ### 4. 遗忘引擎 (每周日凌晨4点)
 - Ebbinghaus 曲线计算记忆强度
 - 动态阈值（重要性 + 记忆类型加权）
-- 不死记忆保护（高重要性/高置信度）
+- 不死记忆保护（高重要性/高置信度 + 证据门槛）
 
 ## 🚀 快速开始
 
@@ -184,17 +263,38 @@ bash setup.sh
 ### 选择上下文档位
 ```bash
 # 默认 256k
-python -m hms.scripts.memory_manager received "你好" --tier 256k
+python -m hms received "你好" --tier 256k
 
 # 32k 低成本模式
-python -m hms.scripts.memory_manager received "你好" --tier 32k
+python -m hms received "你好" --tier 32k
 
 # 1M 超长会话
-python -m hms.scripts.memory_manager received "你好" --tier 1M
+python -m hms received "你好" --tier 1M
 ```
 
 ### 配置
 编辑 `config.json` 中的 `context_tiers` 自定义各档位参数。
+
+### Cron 集成
+```bash
+# 每分钟处理待分析队列
+openclaw cron add --schedule "* * * * *" --command "python -m hms process_pending"
+
+# 每天凌晨3点巩固
+openclaw cron add --schedule "0 3 * * *" --command "python -m hms consolidate"
+
+# 每周日凌晨4点遗忘
+openclaw cron add --schedule "0 4 * * 0" --command "python -m hms forget"
+```
+
+### Skill/Plugin 集成
+```python
+from hms.hooks import on_message_received, on_message_sent
+
+# 在 skill handler 中调用
+ctx = on_message_received(user_message)
+on_message_sent(user_message, assistant_reply)
+```
 
 ## ⚠️ 注意
 

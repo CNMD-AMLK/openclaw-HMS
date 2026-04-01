@@ -1,8 +1,23 @@
 """
-HMS v2 — OpenClaw Hook Integration
+HMS v3 — OpenClaw Integration via Cron/Skill Interface
 
-Provides hook handlers for OpenClaw integration.
-These hooks are called by OpenClaw at specific lifecycle points.
+OpenClaw does not expose a native hook registration API.
+Instead, HMS integrates through:
+
+1. Cron jobs (recommended for production):
+   - openclaw cron add --schedule "* * * * *" --command "python -m hms.scripts.memory_manager process_pending"
+   - openclaw cron add --schedule "0 3 * * *" --command "python -m hms.scripts.memory_manager consolidate"
+   - openclaw cron add --schedule "0 4 * * 0" --command "python -m hms.scripts.memory_manager forget"
+
+2. Skill/Plugin interface:
+   - Import MemoryManager directly in your OpenClaw skill/plugin
+   - Call mgr.on_message_received() / mgr.on_message_sent() from skill handlers
+
+3. Direct CLI usage:
+   - python -m hms.scripts.memory_manager received "用户消息"
+   - python -m hms.scripts.memory_manager process_pending
+   - python -m hms.scripts.memory_manager consolidate
+   - python -m hms.scripts.memory_manager forget
 """
 
 from __future__ import annotations
@@ -16,8 +31,6 @@ from ..scripts.memory_manager import MemoryManager
 
 logger = logging.getLogger(__name__)
 
-
-# Global instance (initialized on first use)
 _manager: Optional[MemoryManager] = None
 
 
@@ -30,70 +43,94 @@ def get_manager() -> MemoryManager:
 
 
 def reset_manager() -> None:
-    """Reset the global MemoryManager instance (e.g. for testing or reconfiguration)."""
+    """Reset the global MemoryManager instance."""
     global _manager
     _manager = None
 
 
 def on_message_received(user_message: str, session_id: str = "") -> Dict[str, Any]:
-    """
-    Hook: Called when a user message is received.
-    
-    Usage in OpenClaw:
-        openclaw hook register message:received "python3 -m hms.hooks.on_message_received"
+    """Process an incoming user message.
+
+    Call this from your OpenClaw skill/plugin when a message arrives.
+    Returns perception + context data to inject into the agent's reply.
     """
     mgr = get_manager()
     return mgr.on_message_received(user_message, session_id)
 
 
 def on_message_sent(user_message: str, assistant_reply: str, session_id: str = "") -> None:
-    """
-    Hook: Called after assistant sends a reply.
-    
-    Usage in OpenClaw:
-        openclaw hook register message:sent "python3 -m hms.hooks.on_message_sent"
+    """Queue a completed conversation turn for async processing.
+
+    Call this from your OpenClaw skill/plugin after the assistant replies.
     """
     mgr = get_manager()
     mgr.on_message_sent(user_message, assistant_reply, session_id)
 
 
-def before_compaction() -> Dict[str, Any]:
-    """
-    Hook: Called before context compaction.
-    Processes pending entries to free up queue.
-    
-    Usage in OpenClaw:
-        openclaw hook register before:compaction "python3 -m hms.hooks.before_compaction"
+def process_pending() -> Dict[str, Any]:
+    """Process all queued conversation turns.
+
+    Should be called periodically via cron (e.g. every minute).
     """
     mgr = get_manager()
     return mgr.process_pending()
 
 
-# CLI interface for testing
+def consolidate() -> Dict[str, Any]:
+    """Run daily consolidation (compression, fingerprint update, etc.).
+
+    Should be called daily via cron (e.g. 3 AM).
+    """
+    mgr = get_manager()
+    return mgr.consolidate()
+
+
+def forget() -> Dict[str, Any]:
+    """Run weekly forgetting pass.
+
+    Should be called weekly via cron (e.g. Sunday 4 AM).
+    """
+    mgr = get_manager()
+    return mgr.forget()
+
+
 if __name__ == "__main__":
     if len(sys.argv) < 2:
-        print("Usage: python -m hms.hooks <hook_name> [args...]")
-        print("Hooks: on_message_received, on_message_sent, before_compaction")
+        print("Usage: python -m hms.hooks <command> [args...]")
+        print("Commands: received, sent, process_pending, consolidate, forget")
+        print("")
+        print("Integration options:")
+        print("  1. Cron: openclaw cron add --schedule '* * * * *' --command 'python -m hms.scripts.memory_manager process_pending'")
+        print("  2. Skill: import hms.hooks; hms.hooks.on_message_received(msg)")
+        print("  3. CLI:   python -m hms.scripts.memory_manager received '消息'")
         sys.exit(1)
-    
-    hook_name = sys.argv[1]
-    
-    if hook_name == "on_message_received":
+
+    cmd = sys.argv[1]
+
+    if cmd == "received":
         msg = sys.argv[2] if len(sys.argv) > 2 else sys.stdin.read().strip()
         result = on_message_received(msg)
         print(json.dumps(result, ensure_ascii=False, indent=2))
-    
-    elif hook_name == "on_message_sent":
+
+    elif cmd == "sent":
         if len(sys.argv) < 4:
-            print("Usage: on_message_sent <user_message> <assistant_reply>")
+            print("Usage: sent <user_message> <assistant_reply>")
             sys.exit(1)
         on_message_sent(sys.argv[2], sys.argv[3])
         print("OK")
-    
-    elif hook_name == "before_compaction":
-        result = before_compaction()
+
+    elif cmd == "process_pending":
+        result = process_pending()
         print(json.dumps(result, ensure_ascii=False, indent=2))
-    
+
+    elif cmd == "consolidate":
+        result = consolidate()
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+
+    elif cmd == "forget":
+        result = forget()
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+
     else:
-        print(f"Unknown hook: {hook_name}")
+        print(f"Unknown command: {cmd}")
         sys.exit(1)
