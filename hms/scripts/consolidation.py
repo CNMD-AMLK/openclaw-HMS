@@ -471,25 +471,27 @@ class ConsolidationEngine:
 # Negation words that truly negate the sentence meaning
 _NEGATION_PATTERNS = [
     re.compile(r'(?<![好不])不(?=[好是行对喜欢讨厌想要需要应该可以能会])'),
-    re.compile(r'没有?(?:做|去|来|看到|听到|知道)?'),
+    re.compile(r'没有?(?:做|去|来|看到|听到|知道)'),
     re.compile(r'无(?=[法效意义用关])'),
-    re.compile(r'非(?=[法常])'),
+    re.compile(r'非(?=[法])'),
     re.compile(r'未(?=[完成知])'),
     re.compile(r'(?<![毫])无(?=[疑问问题])'),
+    re.compile(r'没办?法'),
 ]
 
 
 def _has_negation(text: str) -> bool:
     """Check if text contains true negation (Chinese-aware).
 
-    Avoids false positives like "不错" (not bad = good), "没问题" (no problem = ok).
+    Avoids false positives like "不错" (not bad = good), "没问题" (no problem = ok),
+    "非常好" (very good).
     """
-    text_lower = text.lower()
     # First check explicit negation patterns
     for pattern in _NEGATION_PATTERNS:
         if pattern.search(text):
             return True
-    # Fallback: check standalone negation words
+    # Fallback: check standalone negation words with context
+    # Exclude false positives: 不好, 不错, 不行, 不是, 不用, 不太, 不了, 不起, 不住, 不到, 不过
     standalone_neg = re.findall(r'(?<![好不])不(?!好|错|行|是|用|太|了|起|住|到|过)', text)
     if standalone_neg:
         return True
