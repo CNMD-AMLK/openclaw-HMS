@@ -18,6 +18,8 @@ from typing import Any, Dict, List, Optional
 
 from .utils import estimate_tokens
 
+logger = logging.getLogger(__name__)
+
 
 class LLMAnalyzer:
     """

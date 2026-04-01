@@ -125,6 +125,7 @@ class EmbeddingCache:
                 self._encoder_type = "sentence-transformers"
             except Exception:
                 logger.debug("sentence-transformers load failed, using char_ngram fallback")
+                pass  # fallback to char_ngram
 
         os.makedirs(self._cache_dir, exist_ok=True)
         self._load_cache()
