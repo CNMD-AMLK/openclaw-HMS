@@ -1,6 +1,6 @@
-# HMS — Hierarchical Memory Scaffold v3.3.0
+# HMS — Hierarchical Memory Scaffold v3.3.1
 
-> **让 AI 拥有真正的记忆 — 通过 LLM 驱动的认知记忆系统实现无限上下文**
+> **让 AI 拥有真正的记忆 — 分层记忆管理系统，模拟人类认知过程**
 
 ## 🧠 核心理念
 
