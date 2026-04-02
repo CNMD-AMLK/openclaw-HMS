@@ -83,6 +83,16 @@ class MemoryAdapter:
                 resp = self._session.post(url, json=payload, timeout=self.GATEWAY_TIMEOUT)
                 resp.raise_for_status()
                 return resp.json()
+            except requests.exceptions.HTTPError as exc:
+                status = exc.response.status_code if exc.response is not None else 0
+                # Permanent errors: don't retry
+                if status in (400, 401, 403, 404, 405):
+                    raise
+                # Transient errors: retry
+                if attempt < 2:
+                    time.sleep(min(2 ** attempt, 5))
+                else:
+                    raise
             except (requests.exceptions.ConnectionError, requests.exceptions.Timeout):
                 if attempt < 2:
                     time.sleep(min(2 ** attempt, 5))
@@ -251,6 +261,42 @@ class MemoryAdapter:
         if embed_cache is None:
             return self.store(text, category, importance, metadata)
 
+        with self._dedup_lock:
+            # Search for similar existing memories
+            similar = self.recall(query=text, top_k=3)
+            for mem in similar:
+                existing_text = mem.get("text", "")
+                if not existing_text:
+                    continue
+                sim = embed_cache.similarity(text, existing_text)
+                if sim >= self._dedup_threshold:
+                    # Update existing memory instead of creating new one
+                    logger.info(
+                        "Dedup: merging into existing memory %s (similarity=%.3f)",
+                        mem.get("id", ""), sim,
+                    )
+                    return self.update(mem["id"], importance=max(mem.get("importance", 0), importance))
+
+            return self.store(text, category, importance, metadata)
+
+        with self._dedup_lock:
+            # Search for similar existing memories
+            similar = self.recall(query=text, top_k=3)
+            for mem in similar:
+                existing_text = mem.get("text", "")
+                if not existing_text:
+                    continue
+                sim = embed_cache.similarity(text, existing_text)
+                if sim >= self._dedup_threshold:
+                    # Update existing memory instead of creating new one
+                    logger.info(
+                        "Dedup: merging into existing memory %s (similarity=%.3f)",
+                        mem.get("id", ""), sim,
+                    )
+                    return self.update(mem["id"], importance=max(mem.get("importance", 0), importance))
+
+            return self.store(text, category, importance, metadata)
+
 
 # ======================================================================
 # MemoryManager — Main orchestrator
@@ -328,13 +374,15 @@ class MemoryManager:
         candidates = [
             "config.json",
             os.path.join(os.path.dirname(__file__), "..", "config.json"),
+            os.path.join(os.path.dirname(__file__), "config.json"),
+            os.path.expanduser("~/.openclaw/hms/config.json"),
         ]
         for p in candidates:
             if os.path.isfile(p):
                 try:
                     with open(p, "r", encoding="utf-8") as f:
                         return json.load(f)
-                except Exception as e:
+                except (json.JSONDecodeError, IOError) as e:
                     logger.debug("Config load failed for %s: %s", p, e)
                     continue
         return {}

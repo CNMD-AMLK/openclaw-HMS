@@ -317,11 +317,6 @@ class EmbeddingCache:
                 if len(self._embeddings) > self._max_cache_size:
                     self._evict_old_entries()
 
-            # FIX: enforce cache size limit after batch add
-            with self._lock:
-                if len(self._embeddings) > self._max_cache_size:
-                    self._evict_old_entries()
-
         return results
 
     def similarity(self, text_a: str, text_b: str) -> float:

@@ -28,3 +28,6 @@ Thumbs.db
 # Environment
 .env
 *.env
+
+# User-specific config (may contain tokens)
+hms/config.json

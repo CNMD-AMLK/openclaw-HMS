@@ -53,9 +53,6 @@ class LLMAnalyzer:
         # Set auth header if token is provided
         if self._gateway_token:
             self._session.headers["Authorization"] = f"Bearer {self._gateway_token}"
-        # Set auth header if token is provided
-        if self._gateway_token:
-            self._session.headers["Authorization"] = f"Bearer {self._gateway_token}"
 
         # Load .env file if not already loaded (thread-safe)
         if not LLMAnalyzer._env_loaded:
@@ -91,6 +88,7 @@ class LLMAnalyzer:
         "OPENAI_API_KEY",
         "HMS_LLM_MODEL",
         "HMS_GATEWAY_URL",
+        "HMS_GATEWAY_TOKEN",
     }
 
     @classmethod
@@ -104,7 +102,6 @@ class LLMAnalyzer:
                     if line and not line.startswith("#") and "=" in line:
                         key, val = line.split("=", 1)
                         key = key.strip()
-                        # FIX: only load whitelisted or HMS_ prefixed keys
                         if key in cls._ALLOWED_ENV_KEYS or key.startswith("HMS_"):
                             os.environ.setdefault(key, val.strip())
             cls._env_loaded = True
@@ -269,7 +266,11 @@ class LLMAnalyzer:
             timeout=self._timeout,
         )
         resp.raise_for_status()
-        data = resp.json()
+        try:
+            data = resp.json()
+        except json.JSONDecodeError:
+            logger.warning("Gateway returned non-JSON response: %s", resp.text[:200])
+            return None
 
         # Safely extract message from response
         choices = data.get("choices", [])

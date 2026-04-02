@@ -25,6 +25,8 @@ except ImportError:
 
 _lock_fds: Dict[str, int] = {}
 _lock_fds_lock = threading.Lock()
+_thread_locks: Dict[str, threading.Lock] = {}
+_thread_locks_lock = threading.Lock()
 
 
 def _get_lock_fd(path: str) -> int:
@@ -42,18 +44,25 @@ def _get_lock_fd(path: str) -> int:
 def file_lock(path: str, mode: str = "exclusive"):
     """
     File-level lock using fcntl.flock with cached lock FD.
-    Falls back to no-op on Windows (no fcntl support).
+    Falls back to threading.Lock on Windows (no fcntl support).
     Yields the lock file descriptor. Releases on exit.
     """
-    fd = _get_lock_fd(path)
     if _HAS_FCNTL:
+        fd = _get_lock_fd(path)
+        fcntl.flock(fd, fcntl.LOCK_EX)
         try:
-            fcntl.flock(fd, fcntl.LOCK_EX)
             yield fd
         finally:
             fcntl.flock(fd, fcntl.LOCK_UN)
     else:
-        yield fd
+        # Windows fallback: thread-level lock (not cross-process)
+        if path not in _thread_locks:
+            with _thread_locks_lock:
+                if path not in _thread_locks:
+                    _thread_locks[path] = threading.Lock()
+        lock = _thread_locks[path]
+        with lock:
+            yield None
 
 
 def atomic_write_json(path: str, data: Any) -> None:
