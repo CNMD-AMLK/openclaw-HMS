@@ -561,9 +561,8 @@ class MemoryManager:
         user_msg = entry.get("user_message", "")
         reply = entry.get("assistant_reply", "")
 
-        # 1. Deep perception (LLM)
-        perception = self.perception.analyze(user_msg, reply, force_llm=True)
-
+        # 1. Perception: heuristic-only for async path (LLM calls gated by importance score)
+        perception = self.perception.analyze(user_msg, reply, force_heuristic=True)
         if not perception.get("should_remember", True):
             return
 
@@ -641,6 +640,13 @@ class MemoryManager:
         # 0. Flush pending first to avoid conflict with concurrent process_pending()
         self.process_pending()
 
+        # 1. Single recall: fetch all memories ONCE, reuse across replay/relations
+        try:
+            all_memories = self.adapter.recall(query="", top_k=100) or []
+        except Exception as e:
+            logger.debug("Memory recall for consolidation failed: %s", e)
+            all_memories = []
+
         # 1. Get recent conversations for compression — use stored summaries, not pending
         compressed_list = self.context.get_compressed_summaries(since_hours=24)
         if compressed_list:
@@ -678,21 +684,21 @@ class MemoryManager:
                 self.context.update_fingerprint(fp_result)
                 report["fingerprint_updated"] = True
 
-        # 4. Memory replay
-        try:
-            all_memories = self.adapter.recall(query="", top_k=100) or []
-        except Exception as e:
-            logger.debug("Memory recall for replay failed: %s", e)
-            all_memories = []
-
+        # 4. Memory replay (reuses all_memories from step 0)
         if all_memories:
             replay_candidates = self.consolidation.select_for_replay(all_memories, max_count=20)
             for mem in replay_candidates:
                 mid = mem.get("id", "")
-                # Get related memories
-                related = self.adapter.recall(
-                    query=mem.get("text", "")[:100], top_k=5
-                )
+                # Get related memories from pre-fetched all_memories (avoid recall API calls)
+                mem_text = mem.get("text", "")[:100]
+                related = [
+                    m for m in all_memories
+                    if m.get("id", "") != mid and mem_text[:20] in m.get("text", "")
+                ][:5]
+                if not related:
+                    related = self.adapter.recall(
+                        query=mem.get("text", "")[:100], top_k=5
+                    )
                 result = self.consolidation.replay_memory(mem, related)
                 if result.get("issues"):
                     try:

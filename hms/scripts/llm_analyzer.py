@@ -46,6 +46,12 @@ class LLMAnalyzer:
         self._budget = self.cfg.get("llm_budget_tokens_per_day", 50000)
         self._budget_reset = self._midnight_utc()
 
+        # Rate limiting
+        self._call_timestamps: list[float] = []
+        self._call_timestamps_lock = threading.Lock()
+        self._rate_limit_per_minute = self.cfg.get("llm_rate_limit_per_minute", 10)
+        self._rate_limit_per_hour = self.cfg.get("llm_rate_limit_per_hour", 30)
+
         # Gateway configuration
         self._gateway_url = self.cfg.get("gateway_url", "http://127.0.0.1:18789")
         self._gateway_token = self.cfg.get("gateway_token", "")
@@ -184,10 +190,17 @@ class LLMAnalyzer:
                          self._circuit_open_until - now)
             return None
 
+        # Rate limit check: per-minute and per-hour
+        if self._check_rate_limit(now) is not None:
+            return None
+
         for attempt in range(self._max_retries):
             try:
                 result = self._try_gateway_api(prompt, max_tokens, temperature)
                 if result:
+                    # Record call timestamp for rate limiting
+                    with self._call_timestamps_lock:
+                        self._call_timestamps.append(now)
                     self._call_count += 1
                     prompt_tokens = estimate_tokens(prompt if isinstance(prompt, str) else json.dumps(prompt, ensure_ascii=False))
                     self._token_count += prompt_tokens
@@ -252,6 +265,35 @@ class LLMAnalyzer:
             "Circuit breaker tripped after %d consecutive failures. Cooldown: %ds",
             self._consecutive_failures, self._circuit_cooldown_seconds,
         )
+
+    def _check_rate_limit(self, now: float) -> Optional[str]:
+        """Check per-minute and per-hour rate limits. Returns error message if exceeded."""
+        with self._call_timestamps_lock:
+            # Remove timestamps older than 1 hour
+            one_hour_ago = now - 3600
+            self._call_timestamps = [
+                t for t in self._call_timestamps if t > one_hour_ago
+            ]
+            # Count calls in the last minute and hour
+            one_min_ago = now - 60
+            calls_last_min = sum(1 for t in self._call_timestamps if t > one_min_ago)
+            calls_last_hour = len(self._call_timestamps)
+
+            if calls_last_min >= self._rate_limit_per_minute:
+                logger.warning(
+                    "Rate limit: %d calls in last minute (limit=%d). Skipping.",
+                    calls_last_min, self._rate_limit_per_minute,
+                )
+                return "rate_limit_per_minute"
+
+            if calls_last_hour >= self._rate_limit_per_hour:
+                logger.warning(
+                    "Rate limit: %d calls in last hour (limit=%d). Skipping.",
+                    calls_last_hour, self._rate_limit_per_hour,
+                )
+                return "rate_limit_per_hour"
+
+        return None
 
     @staticmethod
     def _parse_retry_after(response: Optional[requests.Response]) -> float:

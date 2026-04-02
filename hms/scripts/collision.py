@@ -37,6 +37,9 @@ class CollisionEngine:
         self.embed_cache: Optional[EmbeddingCache] = None
         self._embed_threshold = self.cfg.get("embed_similarity_threshold", 0.3)
         self._embed_max_candidates = self.cfg.get("embed_max_candidates", 10)
+        # Thresholds for LLM collision decision
+        self._llm_collision_threshold = self.cfg.get("llm_collision_threshold", 0.85)
+        self._heuristic_min_threshold = self.cfg.get("heuristic_min_threshold", 0.6)
 
     def set_embed_cache(self, cache: EmbeddingCache) -> None:
         """Inject an embedding cache for pre-filtering."""
@@ -77,7 +80,37 @@ class CollisionEngine:
                 "method": "prefilter_empty",
             }
 
-        # Step 2: Try LLM collision
+        # Step 2: Check max embedding similarity to decide LLM usage
+        new_text = new_perception.get("text_for_store", "")
+        if self.embed_cache and new_text:
+            max_sim = 0.0
+            for mem in candidates:
+                sim = self.embed_cache.similarity(new_text, mem.get("text", ""))
+                if sim > max_sim:
+                    max_sim = sim
+            # > 0.85: use LLM for fine-grained collision analysis
+            # 0.6 - 0.85: use heuristic only
+            # < 0.6: skip (no collision)
+            if max_sim < self._heuristic_min_threshold:
+                return {
+                    "contradictions": [],
+                    "reinforcements": [],
+                    "associations": [],
+                    "new_insights": [],
+                    "method": "embed_skip",
+                    "max_similarity": round(max_sim, 3),
+                    "prefilter_count": len(retrieved_memories),
+                    "candidates_count": len(candidates),
+                }
+            if max_sim < self._llm_collision_threshold:
+                result = self._heuristic_collision(new_perception, candidates)
+                result["method"] = "heuristic_by_similarity"
+                result["max_similarity"] = round(max_sim, 3)
+                result["prefilter_count"] = len(retrieved_memories)
+                result["candidates_count"] = len(candidates)
+                return result
+
+        # Step 3: High similarity -> Try LLM collision
         llm_result = self.llm.collide(new_perception, candidates)
         if llm_result:
             llm_result["method"] = "llm"
@@ -85,8 +118,9 @@ class CollisionEngine:
             llm_result["candidates_count"] = len(candidates)
             return llm_result
 
-        # Step 3: Fallback: simple heuristic collision
+        # Step 4: Fallback: LLM call returned None, use heuristic
         result = self._heuristic_collision(new_perception, candidates)
+        result["method"] = "heuristic_fallback"
         result["prefilter_count"] = len(retrieved_memories)
         result["candidates_count"] = len(candidates)
         return result

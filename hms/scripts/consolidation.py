@@ -167,21 +167,23 @@ class ConsolidationEngine:
     ) -> Optional[Dict[str, Any]]:
         """
         Compress a batch of conversations into a structured summary.
-        Uses LLM for intelligent compression.
+        Uses keyword extraction + template (no LLM) to save tokens.
+        Falls back to LLM only if heuristic result is insufficient.
         """
         if not conversations:
             return None
 
-        fp = fingerprint or {}
-        result = self.llm.consolidate(conversations, fp, max_summary_tokens)
-
-        if result:
-            result["created_at"] = datetime.now(timezone.utc).isoformat()
-            result["original_turn_count"] = len(conversations)
-            return result
-
-        # Fallback: simple concatenation-based summary
-        return self._fallback_compress(conversations)
+        # Default: use heuristic compression (saves LLM tokens)
+        result = self._fallback_compress(conversations)
+        if len(conversations) <= 2 and len(result.get("key_decisions", [])) == 0:
+            # Very short conversations with no decisions: try LLM for deeper analysis
+            fp = fingerprint or {}
+            llm_result = self.llm.consolidate(conversations, fp, max_summary_tokens)
+            if llm_result:
+                llm_result["created_at"] = datetime.now(timezone.utc).isoformat()
+                llm_result["original_turn_count"] = len(conversations)
+                return llm_result
+        return result
 
     @staticmethod
     def _fallback_compress(conversations: List[Dict[str, str]]) -> Dict[str, Any]:

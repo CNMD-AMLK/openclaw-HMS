@@ -27,7 +27,7 @@
   "llm_timeout_seconds": 30,
   "llm_max_retries": 3,
 
-  "llm_perception_mode": "full",
+  "llm_perception_mode": "lite",
   "llm_perception_max_tokens": 2000,
 
   "llm_deep_analysis_batch_size": 5,
@@ -38,7 +38,10 @@
 
   "llm_fingerprint_max_tokens": 4000,
 
-  "llm_budget_tokens_per_day": 200000,
+  "llm_budget_tokens_per_day": 50000,
+
+  "llm_rate_limit_per_minute": 8,
+  "llm_rate_limit_per_hour": 25,
 
   "compression_window_turns": 50,
   "compression_max_summary_tokens": 2000,
