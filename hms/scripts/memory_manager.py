@@ -26,6 +26,7 @@ from .context_manager import ContextManager
 from .consolidation import ConsolidationEngine
 from .forgetting import ForgettingEngine
 from .embed_cache import EmbeddingCache
+from .config_loader import Config
 
 logger = logging.getLogger(__name__)
 
@@ -44,14 +45,15 @@ class MemoryAdapter:
     GATEWAY_TIMEOUT = 10
 
     def __init__(self, config: Optional[Dict[str, Any]] = None, tool_impl: Optional[Dict[str, Callable]] = None) -> None:
-        self.cfg = config or {}
+        # Use unified config if not explicitly provided
+        self.cfg = config or Config.get()
         self._tools = tool_impl or {}
         self._session = requests.Session()
 
-        # Gateway URL: config > env var > default
+        # Gateway URL: config > env var > default (Config already resolves env vars)
         self._gateway_url = self.cfg.get(
             "gateway_url",
-            os.environ.get("OPENCLAW_GATEWAY_URL", "http://127.0.0.1:18789")
+            os.environ.get("HMS_GATEWAY_URL", "http://127.0.0.1:18789")
         )
 
         # Gateway auth token
@@ -252,31 +254,9 @@ class MemoryAdapter:
         self, text: str, category: str, importance: int, metadata: str,
         embed_cache: Optional[EmbeddingCache] = None,
     ) -> Any:
-        """Store a memory after checking for near-duplicates.
-
-        If a highly similar memory exists (above dedup_threshold),
-        update the existing one instead of creating a new entry.
-        Uses a thread lock to prevent race conditions in concurrent scenarios.
-        """
+        """Store memory with deduplication using embedding similarity."""
         if embed_cache is None:
-            return self.store(text, category, importance, metadata)
-
-        with self._dedup_lock:
-            # Search for similar existing memories
-            similar = self.recall(query=text, top_k=3)
-            for mem in similar:
-                existing_text = mem.get("text", "")
-                if not existing_text:
-                    continue
-                sim = embed_cache.similarity(text, existing_text)
-                if sim >= self._dedup_threshold:
-                    # Update existing memory instead of creating new one
-                    logger.info(
-                        "Dedup: merging into existing memory %s (similarity=%.3f)",
-                        mem.get("id", ""), sim,
-                    )
-                    return self.update(mem["id"], importance=max(mem.get("importance", 0), importance))
-
+            # No embedding cache, fall back to plain store
             return self.store(text, category, importance, metadata)
 
         with self._dedup_lock:

@@ -36,7 +36,8 @@ class LLMAnalyzer:
     _env_lock = threading.Lock()
 
     def __init__(self, config: Optional[Dict[str, Any]] = None) -> None:
-        self.cfg = config or {}
+        from .config_loader import Config
+        self.cfg = config or Config.get()
         self._model = self.cfg.get("llm_model", "__current__")
         self._timeout = self.cfg.get("llm_timeout_seconds", 30)
         self._max_retries = self.cfg.get("llm_max_retries", 3)
@@ -85,7 +86,6 @@ class LLMAnalyzer:
     # FIX: whitelist of allowed env keys to prevent malicious overrides
     _ALLOWED_ENV_KEYS = {
         "OPENCLAW_GATEWAY_URL",
-        "OPENAI_API_KEY",
         "HMS_LLM_MODEL",
         "HMS_GATEWAY_URL",
         "HMS_GATEWAY_TOKEN",
@@ -370,7 +370,7 @@ class LLMAnalyzer:
         )
         if not raw:
             return None
-        return self._parse_json_response(raw)
+        return self._parse_json_response(raw, required_keys=self._PERCEPTION_SCHEMA)
 
     def collide(
         self,
@@ -400,7 +400,7 @@ class LLMAnalyzer:
         )
         if not raw:
             return None
-        return self._parse_json_response(raw)
+        return self._parse_json_response(raw, required_keys=self._COLLIDE_SCHEMA)
 
     def consolidate(
         self,
@@ -531,33 +531,59 @@ class LLMAnalyzer:
     # JSON parsing helpers
     # ==================================================================
 
+    # Schema validation rules for top-level expected keys
+    _PERCEPTION_SCHEMA = {"entities", "emotion", "intent", "importance", "category", "topics", "key_facts", "should_remember"}
+    _COLLIDE_SCHEMA = {"reinforcements", "conflicts", "updates", "creations"}
+    _GENERIC_MINIMAL_SCHEMA = {}  # no requirement for unknown cognitive tasks
+
     @staticmethod
-    def _parse_json_response(raw: str) -> Optional[Dict[str, Any]]:
-        """Parse JSON from LLM response, handling markdown code blocks."""
+    def _parse_json_response(raw: str, required_keys: Optional[set] = None) -> Optional[Dict[str, Any]]:
+        """Parse JSON from LLM response, handling markdown code blocks.
+
+        Args:
+            raw: Raw LLM text response
+            required_keys: Optional set of top-level keys that must exist;
+                           if provided, missing keys cause validation failure.
+
+        Returns:
+            Parsed dict on success, None if unparseable or schema invalid.
+        """
         text = raw.strip()
 
         # Strip markdown code blocks
         if text.startswith("```"):
             lines = text.split("\n")
-            # Remove first line (```json or ```)
             lines = lines[1:]
-            # Remove last line (```)
             if lines and lines[-1].strip() == "```":
                 lines = lines[:-1]
             text = "\n".join(lines)
 
         try:
-            return json.loads(text)
+            result = json.loads(text)
         except json.JSONDecodeError:
-            # Try to find JSON in the response
             start = text.find("{")
             end = text.rfind("}")
             if start != -1 and end != -1 and end > start:
                 try:
-                    return json.loads(text[start : end + 1])
+                    result = json.loads(text[start : end + 1])
                 except json.JSONDecodeError:
-                    pass
-        return None
+                    return None
+            else:
+                return None
+
+        # Validate type
+        if not isinstance(result, dict):
+            logger.debug("Parsed LLM response is not a dict: %s", type(result))
+            return None
+
+        # Validate required keys if provided
+        if required_keys:
+            missing = required_keys - set(result.keys())
+            if missing:
+                logger.debug("LLM response missing required keys: %s", missing)
+                return None
+
+        return result
 
     # ==================================================================
     # Stats
