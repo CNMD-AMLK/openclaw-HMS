@@ -12,6 +12,8 @@ import logging
 from typing import Any, Callable, Dict, List, Optional
 
 from .llm_analyzer import LLMAnalyzer
+from .consolidation import _has_negation
+import re
 from .embed_cache import EmbeddingCache, prefilter_for_collision
 from .utils import tokenize
 
@@ -131,8 +133,10 @@ class CollisionEngine:
             "wasn't", "weren't", "haven't", "hasn't", "hadn't",
         ]
         contradiction_patterns = [
-            "但是", "然而", "却", "反而", "相反", "其实", "实际上",
-            "but", "however", "actually", "instead", "contrary",
+            re.compile(p) for p in [
+                "但是", "然而", "却", "反而", "相反", "其实", "实际上",
+                "but", "however", "actually", "instead", "contrary",
+            ]
         ]
 
         def detect_sentiment(text: str) -> int:
@@ -157,13 +161,11 @@ class CollisionEngine:
             new_tokens = tokenize(new_text)
             mem_tokens_list = tokenize(mem_text)
 
-            new_neg = (
-                any(w in new_text for w in negation_words)
-                or any(p in new_text for p in contradiction_patterns)
+            new_neg = _has_negation(new_text) or any(
+                p.search(new_text) for p in contradiction_patterns
             )
-            mem_neg = (
-                any(w in mem_text for w in negation_words)
-                or any(p in mem_text for p in contradiction_patterns)
+            mem_neg = _has_negation(mem_text) or any(
+                p.search(mem_text) for p in contradiction_patterns
             )
 
             new_sentiment = detect_sentiment(new_text)

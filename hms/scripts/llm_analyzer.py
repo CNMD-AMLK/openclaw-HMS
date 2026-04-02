@@ -68,7 +68,10 @@ class LLMAnalyzer:
         self._circuit_cooldown_seconds = 300  # 5 minutes
 
         # Persisted circuit breaker state
-        self._cb_state_path = self.cfg.get("cache_dir", "cache") + "/circuit_breaker.json" if self.cfg.get("cache_dir") else None
+        cache_dir = Path(self.cfg.get("cache_dir", "cache"))
+        if not cache_dir.is_absolute():
+            cache_dir = Path(__file__).parent.parent / 'cache'
+        self._cb_state_path = str(cache_dir / 'circuit_breaker.json')
         self._load_circuit_breaker_state()
 
     def close(self) -> None:
@@ -174,6 +177,8 @@ class LLMAnalyzer:
                 result = self._try_gateway_api(prompt, max_tokens, temperature)
                 if result:
                     self._call_count += 1
+                    prompt_tokens = estimate_tokens(json.dumps(prompt))
+                    self._token_count += prompt_tokens
                     self._token_count += estimate_tokens(result)
                     # Reset circuit breaker on success
                     self._consecutive_failures = 0
@@ -533,7 +538,7 @@ class LLMAnalyzer:
 
     # Schema validation rules for top-level expected keys
     _PERCEPTION_SCHEMA = {"entities", "emotion", "intent", "importance", "category", "topics", "key_facts", "should_remember"}
-    _COLLIDE_SCHEMA = {"reinforcements", "conflicts", "updates", "creations"}
+    _COLLIDE_SCHEMA = {"contradictions", "reinforcements", "associations", "inferences"}
     _GENERIC_MINIMAL_SCHEMA = {}  # no requirement for unknown cognitive tasks
 
     @staticmethod

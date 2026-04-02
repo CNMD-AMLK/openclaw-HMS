@@ -4,7 +4,7 @@ requests>=2.28.0,<3.0.0
 
 # Chinese NLP: tokenization for accurate text analysis (optional but recommended)
 # If not installed, falls back to char-bigram tokenization (lower quality)
-# jieba>=0.42.1
+jieba>=0.42.1
 
 # Optional: high-quality embeddings (recommended for production)
 # sentence-transformers>=2.2.0

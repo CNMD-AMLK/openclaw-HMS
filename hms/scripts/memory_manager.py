@@ -14,6 +14,7 @@ import logging
 import os
 import sys
 import time
+from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 import threading
@@ -479,16 +480,20 @@ class MemoryManager:
                 "remaining %d will be processed on next run.",
                 len(entries), max_batch, max_batch, len(entries) - max_batch,
             )
-            # Push back excess entries
+            # Push deferred entries to the FRONT of the queue (prevent starvation)
             excess = entries[max_batch:]
-            for entry in excess:
-                self.context.enqueue(
-                    entry.get("user_message", ""),
-                    entry.get("assistant_reply", ""),
-                    entry.get("session_id", ""),
-                    entry.get("timestamp"),
-                )
             entries = entries[:max_batch]
+            # Write excess first, then existing pending items
+            pending_path = Path(self.context._cache_dir) / 'pending_processing.jsonl'
+            existing_lines = []
+            if pending_path.exists():
+                with open(pending_path) as f:
+                    existing_lines = [l for l in f if l.strip()]
+            with open(pending_path, 'w') as f:
+                for entry in excess:
+                    f.write(json.dumps(entry) + '\n')
+                for line in existing_lines:
+                    f.write(line)
 
         for entry in entries:
             try:
@@ -624,7 +629,7 @@ class MemoryManager:
 
         # 4. Memory replay
         try:
-            all_memories = self.adapter.recall(query="记忆回顾", top_k=100) or []
+            all_memories = self.adapter.recall(query="", top_k=100) or []
         except Exception as e:
             logger.debug("Memory recall for replay failed: %s", e)
             all_memories = []

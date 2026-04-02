@@ -36,7 +36,7 @@ def _get_lock_fd(path: str) -> int:
         os.makedirs(os.path.dirname(lock_path) or ".", exist_ok=True)
         with _lock_fds_lock:
             if path not in _lock_fds:
-                _lock_fds[path] = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o644)
+                _lock_fds[path] = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
     return _lock_fds[path]
 
 
