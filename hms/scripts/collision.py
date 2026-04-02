@@ -9,12 +9,12 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import Any, Callable, Dict, List, Optional
 
-from .llm_analyzer import LLMAnalyzer
 from .consolidation import _has_negation
-import re
 from .embed_cache import EmbeddingCache, prefilter_for_collision
+from .llm_analyzer import LLMAnalyzer
 from .utils import tokenize
 
 logger = logging.getLogger(__name__)

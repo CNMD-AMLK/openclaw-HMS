@@ -1,6 +1,8 @@
 """统一配置加载器"""
+import copy
 import json
 import os
+import threading
 from pathlib import Path
 
 
@@ -8,18 +10,24 @@ class Config:
     """单例配置"""
     _instance = None
     _data = None
+    _lock = threading.Lock()
 
     @classmethod
     def get(cls):
         if cls._data is None:
-            cls._data = cls._load()
-        return cls._data
+            with cls._lock:
+                if cls._data is None:
+                    cls._data = cls._load()
+        return copy.deepcopy(cls._data)
 
     @classmethod
     def _load(cls):
         config_path = Path(__file__).parent.parent / "config.json"
-        with open(config_path) as f:
-            data = json.load(f)
+        try:
+            with open(config_path, encoding="utf-8") as f:
+                data = json.load(f)
+        except (IOError, json.JSONDecodeError) as e:
+            raise RuntimeError(f"Failed to load config from {config_path}: {e}")
         # 从环境变量覆盖敏感配置
         data["gateway_token"] = os.environ.get(
             "HMS_GATEWAY_TOKEN",

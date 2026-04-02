@@ -483,17 +483,19 @@ class MemoryManager:
             # Push deferred entries to the FRONT of the queue (prevent starvation)
             excess = entries[max_batch:]
             entries = entries[:max_batch]
-            # Write excess first, then existing pending items
+            # Write excess first, then existing pending items — under file_lock
+            from .file_utils import file_lock
             pending_path = Path(self.context._cache_dir) / 'pending_processing.jsonl'
-            existing_lines = []
-            if pending_path.exists():
-                with open(pending_path) as f:
-                    existing_lines = [l for l in f if l.strip()]
-            with open(pending_path, 'w') as f:
-                for entry in excess:
-                    f.write(json.dumps(entry) + '\n')
-                for line in existing_lines:
-                    f.write(line)
+            with file_lock(str(pending_path)):
+                existing_lines = []
+                if pending_path.exists():
+                    with open(pending_path, 'r', encoding='utf-8') as f:
+                        existing_lines = [l for l in f if l.strip()]
+                with open(pending_path, 'w', encoding='utf-8') as f:
+                    for entry in excess:
+                        f.write(json.dumps(entry, ensure_ascii=False) + '\n')
+                    for line in existing_lines:
+                        f.write(line)
 
         for entry in entries:
             try:
@@ -590,7 +592,12 @@ class MemoryManager:
             "errors": [],
         }
 
-        # 1. Get recent conversations for compression
+        # 0. Flush pending first to avoid conflict with concurrent process_pending()
+        self.process_pending()
+
+        # 1. Get recent conversations for compression — use stored summaries, not pending
+        compressed_list = self.context.get_compressed_summaries(since_hours=24)
+        # Get pending (now empty after process_pending, but check for new items)
         pending = self.context.pop_all_pending()
         if pending:
             # Compress in batches
@@ -680,7 +687,7 @@ class MemoryManager:
         Evaluate all memories and forget weak ones.
         """
         try:
-            all_memories = self.adapter.recall(query="所有记忆", top_k=500) or []
+            all_memories = self.adapter.recall(query="", top_k=500) or []
         except Exception as e:
             logger.debug("Memory recall for forget failed: %s", e)
             all_memories = []

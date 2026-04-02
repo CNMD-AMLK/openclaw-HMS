@@ -1,4 +1,4 @@
-# HMS — Hierarchical Memory Scaffold v3.3.1
+# HMS — Hierarchical Memory Scaffold v3.5.2
 
 > **让 AI 拥有真正的记忆 — 分层记忆管理系统，模拟人类认知过程**
 

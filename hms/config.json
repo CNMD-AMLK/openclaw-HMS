@@ -134,17 +134,6 @@
     }
   },
 
-  "context_budget": {
-    "system_prompt": 4000,
-    "cognitive_fingerprint_ratio": 0.02,
-    "topic_timelines_ratio": 0.03,
-    "compressed_summaries_ratio": 0.05,
-    "injected_memories_ratio": 0.15,
-    "recent_turns_ratio": 0.35,
-    "response_reserve_ratio": 0.15,
-    "buffer_ratio": 0.05
-  },
-
   "agent_roles": {
     "chat": "助手",
     "worker": "工作分身"

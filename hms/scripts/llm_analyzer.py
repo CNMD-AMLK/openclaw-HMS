@@ -97,17 +97,29 @@ class LLMAnalyzer:
     @classmethod
     def _load_env(cls) -> None:
         """Load .env file if exists, with whitelist protection."""
-        env_path = Path(__file__).parent.parent.parent / ".env"
-        if env_path.exists():
-            with open(env_path, encoding="utf-8") as f:
-                for line in f:
-                    line = line.strip()
-                    if line and not line.startswith("#") and "=" in line:
-                        key, val = line.split("=", 1)
-                        key = key.strip()
-                        if key in cls._ALLOWED_ENV_KEYS or key.startswith("HMS_"):
-                            os.environ.setdefault(key, val.strip())
+        # Try multiple paths: package root, cwd, ~/.hms/
+        candidates = [
+            Path(__file__).parent.parent.parent / ".env",
+            Path.cwd() / ".env",
+            Path.home() / ".hms" / ".env",
+        ]
+        env_path = None
+        for p in candidates:
+            if p.exists():
+                env_path = p
+                break
+        if env_path is None:
             cls._env_loaded = True
+            return
+        with open(env_path, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    key, val = line.split("=", 1)
+                    key = key.strip()
+                    if key in cls._ALLOWED_ENV_KEYS:
+                        os.environ.setdefault(key, val.strip())
+        cls._env_loaded = True
 
     def _load_circuit_breaker_state(self) -> None:
         """Load persisted circuit breaker state if available."""
@@ -177,7 +189,7 @@ class LLMAnalyzer:
                 result = self._try_gateway_api(prompt, max_tokens, temperature)
                 if result:
                     self._call_count += 1
-                    prompt_tokens = estimate_tokens(json.dumps(prompt))
+                    prompt_tokens = estimate_tokens(prompt if isinstance(prompt, str) else json.dumps(prompt, ensure_ascii=False))
                     self._token_count += prompt_tokens
                     self._token_count += estimate_tokens(result)
                     # Reset circuit breaker on success

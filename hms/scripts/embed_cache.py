@@ -206,10 +206,11 @@ class EmbeddingCache:
             self._embeddings = OrderedDict()
 
     def save_cache(self) -> None:
-        """Persist embeddings to compact binary format.
+        """Persist embeddings to compact binary format atomically.
 
         Binary format: [num_entries:u32][dim:u32][key_len:u32][key:bytes][vec:float32*dim]...
         Reduces file size by ~60% compared to JSON and speeds up load/save.
+        Uses tempfile + os.replace for atomic writes.
         """
         if not self._dirty:
             return
@@ -219,13 +220,26 @@ class EmbeddingCache:
                 dim = self._st_model.get_sentence_embedding_dimension()
             else:
                 dim = self._char_encoder.dim
-            with open(self._cache_bin_path, "wb") as f:
-                f.write(struct.pack("<II", len(self._embeddings), dim))
-                for key, vec in self._embeddings.items():
-                    key_bytes = key.encode("utf-8")
-                    f.write(struct.pack("<I", len(key_bytes)))
-                    f.write(key_bytes)
-                    f.write(struct.pack(f"<{dim}f", *vec))
+            # Write to temporary file then atomically replace
+            import tempfile
+            dir_name = os.path.dirname(self._cache_bin_path)
+            fd, tmp_path = tempfile.mkstemp(dir=dir_name, suffix=".tmp")
+            try:
+                with os.fdopen(fd, "wb") as f:
+                    f.write(struct.pack("<II", len(self._embeddings), dim))
+                    for key, vec in self._embeddings.items():
+                        key_bytes = key.encode("utf-8")
+                        f.write(struct.pack("<I", len(key_bytes)))
+                        f.write(key_bytes)
+                        f.write(struct.pack(f"<{dim}f", *vec))
+                os.replace(tmp_path, self._cache_bin_path)
+            except Exception:
+                # On failure, clean up temp file
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
+                raise
             # Remove legacy JSON cache if it exists
             if os.path.isfile(self._cache_path):
                 try:

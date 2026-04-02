@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import tempfile
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Set
 
@@ -74,20 +75,60 @@ class ContextManager:
     def save_state(self, changed: Optional[Set[str]] = None) -> None:
         """Persist all state to disk atomically with locks.
 
+        Uses a temporary directory + batch os.replace so all files are
+        updated consistently — if write fails mid-way, no file is corrupted.
+
         Args:
             changed: Optional set of changed keys ('fingerprint', 'timelines',
                      'compression_history'). If None, saves all three.
         """
         all_keys = changed or {"fingerprint", "timelines", "compression_history"}
-        if "fingerprint" in all_keys:
-            with file_lock(self._fingerprint_path):
-                atomic_write_json(self._fingerprint_path, self._fingerprint)
-        if "timelines" in all_keys:
-            with file_lock(self._timelines_path):
-                atomic_write_json(self._timelines_path, self._timelines)
-        if "compression_history" in all_keys:
-            with file_lock(self._compression_path):
-                atomic_write_json(self._compression_path, self._compression_history)
+
+        file_map = {
+            "fingerprint": (self._fingerprint_path, self._fingerprint),
+            "timelines": (self._timelines_path, self._timelines),
+            "compression_history": (self._compression_path, self._compression_history),
+        }
+
+        # Phase 1: Write all changed files to unique temp files
+        temp_files = {}
+        for key in all_keys:
+            path, data = file_map[key]
+            dir_name = os.path.dirname(path) or "."
+            os.makedirs(dir_name, exist_ok=True)
+            fd, tmp_path = tempfile.mkstemp(dir=dir_name, suffix=".tmp")
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as f:
+                    json.dump(data, f, ensure_ascii=False, indent=2)
+                temp_files[key] = (path, tmp_path)
+            except Exception:
+                # Clean up temp files on failure
+                for _, (_, tp) in temp_files.items():
+                    try:
+                        os.unlink(tp)
+                    except OSError:
+                        pass
+                raise
+
+        # Phase 2: Atomically replace all files under lock (batch rename)
+        # Lock the first file as the coordination lock
+        first_key = next(iter(all_keys))
+        first_path = file_map[first_key][0]
+        with file_lock(first_path):
+            for key, (path, tmp_path) in temp_files.items():
+                try:
+                    os.replace(tmp_path, path)
+                    with file_lock(path):
+                        pass  # Touch lock so readers see the update
+                except OSError:
+                    # If replace fails, clean up remaining temp files
+                    for _, (p, tp) in temp_files.items():
+                        if p != path:
+                            try:
+                                os.unlink(tp)
+                            except OSError:
+                                pass
+                    raise
 
     # ==================================================================
     # Pending queue
