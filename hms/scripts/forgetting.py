@@ -99,8 +99,20 @@ class ForgettingEngine:
     def flush(self) -> None:
         """Persist decay state to disk if dirty."""
         if self._dirty:
-            with file_lock(self._cache_path):
-                atomic_write_json(self._cache_path, self._states)
+            import tempfile as _tmp
+            _dir = os.path.dirname(self._cache_path) or "."
+            os.makedirs(_dir, exist_ok=True)
+            _fd, _tmp_path = _tmp.mkstemp(dir=_dir, suffix=".tmp")
+            try:
+                with os.fdopen(_fd, "w", encoding="utf-8") as _f:
+                    json.dump(self._states, _f, ensure_ascii=False, indent=2)
+                os.replace(_tmp_path, self._cache_path)
+            except Exception:
+                try:
+                    os.unlink(_tmp_path)
+                except OSError:
+                    pass
+                raise
             self._dirty = False
 
     # ==================================================================
@@ -200,6 +212,7 @@ class ForgettingEngine:
         for mem in lancedb_memories:
             mid = mem.get("id", "")
             if not mid:
+                logger.warning("Skipping memory with empty ID in evaluate_all")
                 continue
 
             self._sync_from_memory(mem)
@@ -258,6 +271,7 @@ class ForgettingEngine:
         """Pull metadata into decay state if not already tracked."""
         mid = mem.get("id", "")
         if not mid:
+            logger.warning("Skipping memory with empty ID in _sync_from_memory")
             return
         meta = self._parse_meta(mem.get("metadata"))
         s = self._states.get(mid, {})

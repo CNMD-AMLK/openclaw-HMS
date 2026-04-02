@@ -141,11 +141,11 @@ class LLMAnalyzer:
             return
         try:
             os.makedirs(os.path.dirname(self._cb_state_path), exist_ok=True)
-            with open(self._cb_state_path, "w") as f:
-                json.dump({
-                    "consecutive_failures": self._consecutive_failures,
-                    "circuit_open_until": self._circuit_open_until,
-                }, f)
+            from .file_utils import atomic_write_json
+            atomic_write_json(self._cb_state_path, {
+                "consecutive_failures": self._consecutive_failures,
+                "circuit_open_until": self._circuit_open_until,
+            })
         except IOError as e:
             logger.debug("Failed to save circuit breaker state: %s", e)
 
@@ -229,6 +229,8 @@ class LLMAnalyzer:
                 time.sleep(wait)
                 self._consecutive_failures += 1
 
+            except (KeyboardInterrupt, SystemExit):
+                raise
             except Exception as e:
                 logger.debug("LLM call failed: %s", e)
                 self._consecutive_failures += 1

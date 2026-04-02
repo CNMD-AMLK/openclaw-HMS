@@ -10,6 +10,7 @@ from __future__ import annotations
 from typing import Any, Dict, Optional
 
 from .llm_analyzer import LLMAnalyzer
+from .utils import sanitize_text
 
 
 class PerceptionEngine:
@@ -42,6 +43,10 @@ class PerceptionEngine:
           force_llm: Skip heuristic, use LLM regardless of mode.
           force_heuristic: Skip LLM, use heuristic regardless of mode.
         """
+        user_message = sanitize_text(user_message)
+        if assistant_reply:
+            assistant_reply = sanitize_text(assistant_reply)
+
         if self._mode == "lite" or force_heuristic:
             return self._heuristic_result(user_message, assistant_reply)
 

@@ -24,6 +24,7 @@ except ImportError:
     _HAS_FCNTL = False
 
 _lock_fds: Dict[str, int] = {}
+_lock_fd_counts: Dict[int, int] = {}
 _lock_fds_lock = threading.Lock()
 _thread_locks: Dict[str, threading.Lock] = {}
 _thread_locks_lock = threading.Lock()
@@ -36,8 +37,13 @@ def _get_lock_fd(path: str) -> int:
         os.makedirs(os.path.dirname(lock_path) or ".", exist_ok=True)
         with _lock_fds_lock:
             if path not in _lock_fds:
-                _lock_fds[path] = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
-    return _lock_fds[path]
+                fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+                _lock_fds[path] = fd
+                _lock_fd_counts[fd] = _lock_fd_counts.get(fd, 0) + 1
+                return fd
+    fd = _lock_fds[path]
+    _lock_fd_counts[fd] = _lock_fd_counts.get(fd, 0) + 1
+    return fd
 
 
 @contextmanager
@@ -54,6 +60,18 @@ def file_lock(path: str, mode: str = "exclusive"):
             yield fd
         finally:
             fcntl.flock(fd, fcntl.LOCK_UN)
+            with _lock_fds_lock:
+                _lock_fd_counts[fd] = _lock_fd_counts.get(fd, 0) - 1
+                if _lock_fd_counts[fd] <= 0:
+                    try:
+                        os.close(fd)
+                    except OSError:
+                        pass
+                    _lock_fd_counts.pop(fd, None)
+                    # Also remove from _lock_fds if no path maps to this fd
+                    paths_to_remove = [p for p, f in _lock_fds.items() if f == fd]
+                    for p in paths_to_remove:
+                        _lock_fds.pop(p, None)
     else:
         # Windows fallback: thread-level lock (not cross-process)
         if path not in _thread_locks:

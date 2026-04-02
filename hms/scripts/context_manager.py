@@ -200,7 +200,8 @@ class ContextManager:
                         if line:
                             try:
                                 entries.append(json.loads(line))
-                            except json.JSONDecodeError:
+                            except json.JSONDecodeError as e:
+                                logger.warning("Corrupted JSONL line in pending queue, skipping: %s", line[:100])
                                 continue
                     if entries:
                         f.seek(0)

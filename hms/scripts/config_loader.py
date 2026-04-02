@@ -1,5 +1,4 @@
 """统一配置加载器"""
-import copy
 import json
 import os
 import threading
@@ -18,7 +17,7 @@ class Config:
             with cls._lock:
                 if cls._data is None:
                     cls._data = cls._load()
-        return copy.deepcopy(cls._data)
+        return cls._data
 
     @classmethod
     def _load(cls):
@@ -41,4 +40,5 @@ class Config:
 
     @classmethod
     def reload(cls):
-        cls._data = cls._load()
+        with cls._lock:
+            cls._data = cls._load()

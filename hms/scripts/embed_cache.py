@@ -116,6 +116,9 @@ class CharNGramEncoder:
 def cosine_similarity(a: List[float], b: List[float]) -> float:
     """Compute cosine similarity between two vectors."""
     if len(a) != len(b):
+        logger.warning(
+            "cosine_similarity dimension mismatch: len(a)=%d, len(b)=%d", len(a), len(b)
+        )
         return 0.0
     dot = sum(x * y for x, y in zip(a, b))
     na = math.sqrt(sum(x * x for x in a))
@@ -192,7 +195,7 @@ class EmbeddingCache:
                     logger.debug("Loaded %d embeddings from binary cache", num_entries)
                     return
             except (struct.error, ValueError, IOError) as e:
-                logger.debug("Binary cache load failed: %s, trying JSON fallback", e)
+                logger.warning("Embedding cache dimension mismatch, discarding cache: %s", e)
 
         # Fall back to legacy JSON format
         if os.path.isfile(self._cache_path):
@@ -200,7 +203,21 @@ class EmbeddingCache:
                 with open(self._cache_path, "r", encoding="utf-8") as f:
                     data = json.load(f)
                     self._embeddings = OrderedDict(data)
-            except (json.JSONDecodeError, IOError):
+            except (json.JSONDecodeError, IOError) as e:
+                logger.warning("Embedding cache dimension mismatch, discarding cache: %s", e)
+                self._embeddings = OrderedDict()
+
+        # Verify loaded embeddings have correct dimension
+        expected_dim = self._char_encoder.dim
+        if self._st_model is not None:
+            expected_dim = self._st_model.get_sentence_embedding_dimension()
+        if self._embeddings and expected_dim:
+            first_vec = next(iter(self._embeddings.values()))
+            if len(first_vec) != expected_dim:
+                logger.warning(
+                    "Embedding cache dimension mismatch (got %d, expected %d), discarding cache",
+                    len(first_vec), expected_dim,
+                )
                 self._embeddings = OrderedDict()
         else:
             self._embeddings = OrderedDict()

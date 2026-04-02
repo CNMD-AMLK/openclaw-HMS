@@ -411,9 +411,18 @@ class ConsolidationEngine:
         """Discover relations via shared entities/topics (fallback)."""
         relations = []
         n = len(memories)
+        max_pairs = 5000
+        pairs_checked = 0
 
         for i in range(n):
             for j in range(i + 1, min(n, i + 20)):
+                if pairs_checked >= max_pairs:
+                    logger.warning(
+                        "Heuristic relation discovery exceeded max_pairs=%d at i=%d, stopping",
+                        max_pairs, i,
+                    )
+                    break
+                pairs_checked += 1
                 a, b = memories[i], memories[j]
                 meta_a = a.get("metadata") or {}
                 meta_b = b.get("metadata") or {}
@@ -440,6 +449,8 @@ class ConsolidationEngine:
                             "confidence": round(confidence, 3),
                             "shared": list(shared_entities | shared_topics)[:5],
                         })
+            if pairs_checked >= max_pairs:
+                break
 
         return relations
 

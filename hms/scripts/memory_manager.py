@@ -32,6 +32,16 @@ from .config_loader import Config
 logger = logging.getLogger(__name__)
 
 
+class StoreError(Exception):
+    """Raised when memory store operation fails."""
+    pass
+
+
+class RecallError(Exception):
+    """Raised when memory recall operation fails."""
+    pass
+
+
 # ======================================================================
 # MemoryAdapter — API isolation layer
 # ======================================================================
@@ -50,6 +60,7 @@ class MemoryAdapter:
         self.cfg = config or Config.get()
         self._tools = tool_impl or {}
         self._session = requests.Session()
+        self._session_lock = threading.Lock()
 
         # Gateway URL: config > env var > default (Config already resolves env vars)
         self._gateway_url = self.cfg.get(
@@ -68,9 +79,10 @@ class MemoryAdapter:
 
     def close(self) -> None:
         """Close the HTTP session and release connections."""
-        if self._session:
-            self._session.close()
-            self._session = None
+        with self._session_lock:
+            if self._session:
+                self._session.close()
+                self._session = None
 
     def __enter__(self) -> "MemoryAdapter":
         return self
@@ -81,26 +93,48 @@ class MemoryAdapter:
     def _call_gateway_api(self, endpoint: str, payload: Dict[str, Any]) -> Any:
         """Call OpenClaw Gateway internal API via HTTP POST with connection pooling and retry."""
         url = f"{self._gateway_url}{endpoint}"
-        for attempt in range(3):
-            try:
-                resp = self._session.post(url, json=payload, timeout=self.GATEWAY_TIMEOUT)
-                resp.raise_for_status()
-                return resp.json()
-            except requests.exceptions.HTTPError as exc:
-                status = exc.response.status_code if exc.response is not None else 0
-                # Permanent errors: don't retry
-                if status in (400, 401, 403, 404, 405):
+        with self._session_lock:
+            for attempt in range(3):
+                try:
+                    resp = self._session.post(url, json=payload, timeout=self.GATEWAY_TIMEOUT)
+                    resp.raise_for_status()
+                    return resp.json()
+                except requests.exceptions.HTTPError as exc:
+                    status = exc.response.status_code if exc.response is not None else 0
+                    # Permanent errors: don't retry
+                    if status in (400, 401, 403, 404, 405):
+                        raise
+                    # Transient errors: retry
+                    if attempt < 2:
+                        time.sleep(min(2 ** attempt, 5))
+                    else:
+                        raise
+                except requests.exceptions.SSLError as e:
+                    logger.warning("SSL error calling %s: %s", url, e)
                     raise
-                # Transient errors: retry
-                if attempt < 2:
-                    time.sleep(min(2 ** attempt, 5))
-                else:
+                except requests.exceptions.InvalidURL as e:
+                    logger.warning("Invalid URL %s: %s", url, e)
                     raise
-            except (requests.exceptions.ConnectionError, requests.exceptions.Timeout):
-                if attempt < 2:
-                    time.sleep(min(2 ** attempt, 5))
-                else:
+                except requests.exceptions.InvalidSchema as e:
+                    logger.warning("Invalid schema for %s: %s", url, e)
                     raise
+                except requests.exceptions.ChunkedEncodingError as e:
+                    logger.warning("Chunked encoding error for %s: %s", url, e)
+                    if attempt < 2:
+                        time.sleep(min(2 ** attempt, 5))
+                    else:
+                        raise
+                except (requests.exceptions.ConnectionError, requests.exceptions.Timeout):
+                    if attempt < 2:
+                        time.sleep(min(2 ** attempt, 5))
+                    else:
+                        raise
+                except requests.exceptions.RequestException as e:
+                    logger.warning("Unexpected request error for %s: %s", url, e)
+                    if attempt < 2:
+                        time.sleep(min(2 ** attempt, 5))
+                    else:
+                        raise
 
     def health_check(self) -> Dict[str, Any]:
         """Verify Gateway connectivity and memory API endpoints."""
@@ -113,10 +147,11 @@ class MemoryAdapter:
         }
         # Check gateway reachability
         try:
-            resp = self._session.get(
-                f"{self._gateway_url}/health",
-                timeout=5,
-            )
+            with self._session_lock:
+                resp = self._session.get(
+                    f"{self._gateway_url}/health",
+                    timeout=5,
+                )
             if resp.status_code == 200:
                 result["gateway_reachable"] = True
         except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
@@ -125,11 +160,12 @@ class MemoryAdapter:
 
         # Check memory API — these are internal plugin endpoints, may not be exposed via HTTP
         try:
-            resp = self._session.post(
-                f"{self._gateway_url}/api/tools/memory-recall",
-                json={"query": "health", "top_k": 1},
-                timeout=5,
-            )
+            with self._session_lock:
+                resp = self._session.post(
+                    f"{self._gateway_url}/api/tools/memory-recall",
+                    json={"query": "health", "top_k": 1},
+                    timeout=5,
+                )
             if resp.status_code in (200, 400, 422):
                 result["memory_api_available"] = True
             else:
@@ -139,11 +175,12 @@ class MemoryAdapter:
 
         # Check graph API
         try:
-            resp = self._session.post(
-                f"{self._gateway_url}/api/tools/gm-search",
-                json={"query": "health", "depth": 1},
-                timeout=5,
-            )
+            with self._session_lock:
+                resp = self._session.post(
+                    f"{self._gateway_url}/api/tools/gm-search",
+                    json={"query": "health", "depth": 1},
+                    timeout=5,
+                )
             if resp.status_code in (200, 400, 422):
                 result["graph_api_available"] = True
             else:
@@ -165,8 +202,8 @@ class MemoryAdapter:
             fn = self._tools.get("memory_store")
             if fn:
                 return fn(text=text, category=category, importance=importance, metadata=metadata)
-            logger.debug("Gateway store failed, using stub: %s", e)
-            return {"status": "stubbed", "text": text[:40]}
+            logger.warning("Gateway store failed: %s", e)
+            raise StoreError(f"store failed: {e}")
 
     def recall(self, query: str, top_k: int = 5, category: Optional[str] = None) -> List[Dict[str, Any]]:
         try:
@@ -182,8 +219,8 @@ class MemoryAdapter:
             if fn:
                 memories = fn(query=query, top_k=top_k, category=category) or []
                 return self._filter_forgotten(memories)
-            logger.debug("Gateway recall failed: %s", e)
-            return []
+            logger.warning("Gateway recall failed: %s", e)
+            raise RecallError(f"recall failed: {e}")
 
     @staticmethod
     def _filter_forgotten(memories: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -234,8 +271,8 @@ class MemoryAdapter:
             fn = self._tools.get("gm_record")
             if fn:
                 return fn(source=source, target=target, relation=relation, context=context)
-            logger.debug("Gateway gm-record failed: %s", e)
-            return {"status": "stubbed"}
+            logger.warning("Gateway gm-record failed: %s", e)
+            raise StoreError(f"graph_record failed: {e}")
 
     def graph_search(self, query: str, depth: int = 2) -> List[Dict[str, Any]]:
         try:
@@ -248,8 +285,8 @@ class MemoryAdapter:
             fn = self._tools.get("gm_search")
             if fn:
                 return fn(query=query, depth=depth) or []
-            logger.debug("Gateway gm-search failed: %s", e)
-            return []
+            logger.warning("Gateway gm-search failed: %s", e)
+            raise RecallError(f"graph_search failed: {e}")
 
     def store_with_dedup(
         self, text: str, category: str, importance: int, metadata: str,
@@ -400,14 +437,23 @@ class MemoryManager:
 
         Returns context to inject into the agent's turn.
         """
+        MAX_MESSAGE_LENGTH = 4096
+        if len(user_message) > MAX_MESSAGE_LENGTH:
+            logger.warning("Message too long (%d chars), truncating to %d", len(user_message), MAX_MESSAGE_LENGTH)
+            user_message = user_message[:MAX_MESSAGE_LENGTH] + "..."
+
         # 1. Quick perception (heuristic only — no LLM for sync path)
         perception = self.perception.analyze(user_message, force_heuristic=True)
 
         # 2. Retrieve related memories
-        retrieved = self.adapter.recall(
-            query=user_message,
-            top_k=self.cfg.get("retrieval_top_k", 8),
-        )
+        try:
+            retrieved = self.adapter.recall(
+                query=user_message,
+                top_k=self.cfg.get("retrieval_top_k", 8),
+            )
+        except RecallError:
+            logger.warning("Recall failed in on_message_received, returning empty")
+            retrieved = []
 
         # 3. Update access counts
         for mem in retrieved:
@@ -597,13 +643,11 @@ class MemoryManager:
 
         # 1. Get recent conversations for compression — use stored summaries, not pending
         compressed_list = self.context.get_compressed_summaries(since_hours=24)
-        # Get pending (now empty after process_pending, but check for new items)
-        pending = self.context.pop_all_pending()
-        if pending:
+        if compressed_list:
             # Compress in batches
             batch_size = self.cfg.get("compression_window_turns", 10)
-            for i in range(0, len(pending), batch_size):
-                batch = pending[i : i + batch_size]
+            for i in range(0, len(compressed_list), batch_size):
+                batch = compressed_list[i : i + batch_size]
                 conversations = [
                     {"user": e.get("user_message", ""), "assistant": e.get("assistant_reply", "")}
                     for e in batch
