@@ -110,6 +110,36 @@ class MemoryAdapter:
             result["errors"].append(f"Gateway unreachable: {e}")
             return result
 
+        # Check memory API — these are internal plugin endpoints, may not be exposed via HTTP
+        try:
+            resp = self._session.post(
+                f"{self._gateway_url}/api/tools/memory-recall",
+                json={"query": "health", "top_k": 1},
+                timeout=5,
+            )
+            if resp.status_code in (200, 400, 422):
+                result["memory_api_available"] = True
+            else:
+                result["errors"].append(f"Memory API returned HTTP {resp.status_code}")
+        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
+            result["errors"].append(f"Memory API error: {e}")
+
+        # Check graph API
+        try:
+            resp = self._session.post(
+                f"{self._gateway_url}/api/tools/gm-search",
+                json={"query": "health", "depth": 1},
+                timeout=5,
+            )
+            if resp.status_code in (200, 400, 422):
+                result["graph_api_available"] = True
+            else:
+                result["errors"].append(f"Graph API returned HTTP {resp.status_code}")
+        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
+            result["errors"].append(f"Graph API error: {e}")
+
+        return result
+
     def store(self, text: str, category: str, importance: int, metadata: str) -> Any:
         try:
             return self._call_gateway_api("/api/tools/memory-store", {
