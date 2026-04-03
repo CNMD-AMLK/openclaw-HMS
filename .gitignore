@@ -29,5 +29,5 @@ Thumbs.db
 .env
 *.env
 
-# User-specific config (may contain tokens)
-hms/config.json
+# User-specific overrides — use HMS_GATEWAY_TOKEN env var instead
+# hms/config.json is tracked — edit it to configure HMS

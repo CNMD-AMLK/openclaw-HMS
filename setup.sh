@@ -16,7 +16,7 @@ echo "============================================"
 echo ""
 
 # ---- Step 1: Check Python version ----
-echo "[1/7] Checking Python version..."
+echo "[1/8] Checking Python version..."
 PYTHON_CMD=""
 if command -v python3 &> /dev/null; then
     PYTHON_CMD="python3"
@@ -37,24 +37,38 @@ if [ "$PYTHON_MAJOR" -lt 3 ] || ([ "$PYTHON_MAJOR" -eq 3 ] && [ "$PYTHON_MINOR" 
 fi
 echo "  ✓ Python $PYTHON_VERSION found"
 
-# ---- Step 2: Install dependencies ----
-echo "[2/7] Installing Python dependencies..."
+# ---- Step 2: Detect OpenClaw Gateway ----
+echo "[2/8] Detecting OpenClaw Gateway..."
+DEFAULT_GATEWAY="http://127.0.0.1:18789"
+GATEWAY_URL="${HMS_GATEWAY_URL:-${DEFAULT_GATEWAY}}"
+GATEWAY_REACHABLE=false
+
+if curl -s --max-time 3 "${GATEWAY_URL}/health" > /dev/null 2>&1; then
+    echo "  ✓ OpenClaw Gateway found at ${GATEWAY_URL}"
+    GATEWAY_REACHABLE=true
+else
+    echo "  ⚠ OpenClaw Gateway not reachable at ${GATEWAY_URL}"
+    echo "    HMS will use heuristic fallbacks until Gateway is available."
+fi
+
+# ---- Step 3: Install dependencies ----
+echo "[3/8] Installing Python dependencies..."
 if $PYTHON_CMD -m pip install --quiet -r "${SCRIPT_DIR}/requirements.txt" 2>/dev/null; then
     echo "  ✓ Dependencies installed"
 else
-    echo "  ⚠ Dependency installation failed, continuing..."
+    echo "  ⚠ Dependency installation failed (may need --break-system-packages)"
 fi
 
-# ---- Step 3: Create directory structure ----
-echo "[3/7] Creating directory structure..."
+# ---- Step 4: Create directory structure ----
+echo "[4/8] Creating directory structure..."
 mkdir -p "${HMS_DIR}/cache"
 mkdir -p "${HMS_DIR}/logs"
 mkdir -p "${HMS_DIR}/hooks"
 mkdir -p "${HMS_DIR}/prompts"
 echo "  ✓ Directories created"
 
-# ---- Step 4: Initialize cache files ----
-echo "[4/7] Initializing cache files..."
+# ---- Step 5: Initialize cache files ----
+echo "[5/8] Initializing cache files..."
 
 init_json() {
     local file="$1"
@@ -74,78 +88,83 @@ init_json "${HMS_DIR}/cache/decay_state.json"
 if [ ! -f "${HMS_DIR}/cache/compression_history.json" ]; then
     echo "[]" > "${HMS_DIR}/cache/compression_history.json"
     echo "  ✓ Created compression_history.json"
-else
-    echo "  ✓ compression_history.json already exists"
-fi
-
-if [ ! -f "${HMS_DIR}/cache/active_context.md" ]; then
-    echo "# Active Context" > "${HMS_DIR}/cache/active_context.md"
-    echo "  ✓ Created active_context.md"
-else
-    echo "  ✓ active_context.md already exists"
 fi
 
 if [ ! -f "${HMS_DIR}/cache/pending_processing.jsonl" ]; then
     touch "${HMS_DIR}/cache/pending_processing.jsonl"
     echo "  ✓ Created pending_processing.jsonl"
-else
-    echo "  ✓ pending_processing.jsonl already exists"
 fi
 
-# ---- Step 5: Set permissions ----
-echo "[5/7] Setting file permissions..."
+# ---- Step 6: Setup .env configuration ----
+echo "[6/8] Configuring environment..."
+
+ENV_FILE="${HMS_DIR}/.env"
+ENV_EXAMPLE="${SCRIPT_DIR}/.env.example"
+
+if [ -f "${ENV_FILE}" ]; then
+    echo "  ✓ .env file already exists"
+elif [ -f "${ENV_EXAMPLE}" ]; then
+    echo "  ℹ Copying .env.example to .env (please edit it)"
+    cp "${ENV_EXAMPLE}" "${ENV_FILE}"
+    echo "  ✓ .env created from .env.example"
+    echo "  ⚠ Please edit ${ENV_FILE} to set HMS_GATEWAY_TOKEN"
+else
+    # Create minimal .env
+    cat > "${ENV_FILE}" << 'ENVEOF'
+HMS_GATEWAY_URL=http://127.0.0.1:18789
+HMS_GATEWAY_TOKEN=
+HMS_LLM_MODEL=openclaw
+ENVEOF
+    echo "  ✓ Created minimal .env file"
+    echo "  ⚠ Please edit ${ENV_FILE} to set HMS_GATEWAY_TOKEN"
+fi
+
+# Load .env if it exists
+if [ -f "${ENV_FILE}" ]; then
+    set -a
+    source "${ENV_FILE}"
+    set +a
+fi
+
+# ---- Step 7: Run health check ----
+echo "[7/8] Running health check..."
+cd "${SCRIPT_DIR}"
+HEALTH_OUTPUT=$($PYTHON_CMD -m hms health 2>&1 || echo "health_check_failed")
+if echo "$HEALTH_OUTPUT" | grep -q "health_check_failed"; then
+    echo "  ⚠ Health check failed — check Gateway connectivity"
+elif echo "$HEALTH_OUTPUT" | grep -q "gateway_reachable.*true"; then
+    echo "  ✓ Gateway reachable"
+else
+    echo "  ℹ Gateway not reachable (normal if OpenClaw is not running)"
+fi
+
+# ---- Step 8: Set permissions and print summary ----
+echo "[8/8] Setting permissions..."
 chmod +x "${HMS_DIR}/scripts/"*.py 2>/dev/null || true
 chmod +x "${SCRIPT_DIR}/setup.sh"
 echo "  ✓ Permissions set"
 
-# ---- Step 6: Run tests ----
-echo "[6/7] Running tests..."
-cd "${SCRIPT_DIR}"
-if $PYTHON_CMD hms/scripts/test_e2e.py; then
-    echo "  ✓ All tests passed"
-else
-    echo "  ✗ Some tests failed. Please check the output above."
-    echo "  (LLM-dependent tests may fail if OpenClaw model is not configured)"
-    echo "  Continuing with setup..."
-fi
-
-# ---- Step 7: Print OpenClaw commands ----
-echo "[7/7] Setup complete!"
 echo ""
 echo "============================================"
-echo "OpenClaw Integration Commands"
+echo "Setup complete!"
 echo "============================================"
 echo ""
-echo "Run these commands to register HMS v3 with OpenClaw:"
+echo "Next steps:"
+echo "  1. Edit ${ENV_FILE} if you haven't set HMS_GATEWAY_TOKEN"
+echo "  2. Register with OpenClaw (see below)"
 echo ""
-echo "# Register cron jobs"
-echo 'openclaw cron add --schedule "* * * * *" --command "python -m hms process_pending"'
-echo 'openclaw cron add --schedule "0 3 * * *" --command "python -m hms consolidate"'
-echo 'openclaw cron add --schedule "0 4 * * 0" --command "python -m hms forget"'
+echo "OpenClaw Integration:"
 echo ""
-echo "# Or use as a Python module in your skill/plugin:"
+echo "  # Every minute — process pending memories"
+echo '  openclaw cron add --schedule "* * * * *" --command "python -m hms process_pending"'
+echo ""
+echo "  # Daily at 3 AM — consolidate memories"
+echo '  openclaw cron add --schedule "0 3 * * *" --command "python -m hms consolidate"'
+echo ""
+echo "  # Weekly Sunday at 4 AM — forget weak memories"
+echo '  openclaw cron add --schedule "0 4 * * 0" --command "python -m hms forget"'
+echo ""
+echo "Or use as a Python module in your skill/plugin:"
 echo "  from hms.hooks import on_message_received, on_message_sent"
-echo ""
-echo "============================================"
-echo "v3 Key Features"
-echo "============================================"
-echo ""
-echo "  • LLM-driven perception (replaces dictionary-based)"
-echo "  • Three-layer infinite context:"
-echo "    Layer 1: Cognitive fingerprint (~2000 tokens, always present)"
-echo "    Layer 2: Topic timelines + compressed summaries"
-echo "    Layer 3: Recent turns + injected memories"
-echo "  • Automatic conversation compression"
-echo "  • Dynamic cognitive profile updates"
-echo ""
-echo "============================================"
-echo "Configuration"
-echo "============================================"
-echo ""
-echo "Edit ${HMS_DIR}/config.json to configure:"
-echo "  • llm_perception_mode: 'full' | 'lite' | 'llm_only'"
-echo "  • llm_budget_tokens_per_day: daily LLM token budget"
-echo "  • compression_window_turns: turns per compression batch"
-echo "  • context_budget: token allocation ratios"
 echo ""
 echo "Done! 🧠"
