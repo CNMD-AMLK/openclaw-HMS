@@ -79,13 +79,18 @@ class MemoryBelief:
         return self._apply_strength_and_update()
 
     def _apply_strength_and_update(self) -> float:
+        """Apply strength multiplier and update last_evaluated.
+
+        FIX: Round only once at the end, avoiding double-rounding that
+        could cause confidence values to drift.
+        """
         strength_mult = {
             BeliefStrength.CERTAIN: 1.0,
             BeliefStrength.LIKELY: 0.8,
             BeliefStrength.UNCERTAIN: 0.5,
             BeliefStrength.CONTRADICTED: 0.1,
         }
-        self.confidence = round(min(1.0, self.confidence * strength_mult[self.strength]), 4)
+        self.confidence = min(1.0, self.confidence * strength_mult[self.strength])
         self.last_evaluated = datetime.now(timezone.utc)
         if self.confidence >= 0.9:
             self.strength = BeliefStrength.CERTAIN
@@ -95,6 +100,7 @@ class MemoryBelief:
             self.strength = BeliefStrength.UNCERTAIN
         else:
             self.strength = BeliefStrength.CONTRADICTED
+        self.confidence = round(self.confidence, 4)  # single round at the end
         return self.confidence
 
 

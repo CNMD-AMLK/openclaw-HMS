@@ -100,14 +100,13 @@ def safe_divide(numerator: float, denominator: float, default: float = 0.0) -> f
 
 
 def sanitize_text(text: str) -> str:
-    """Remove control characters (preserving \\n\\t), replace null bytes, clean invisible chars."""
+    """Remove control characters (preserving \n\t), replace null bytes, clean invisible chars."""
     if not isinstance(text, str):
         return text
     # Replace null bytes
     text = text.replace("\x00", "")
     text = text.replace("\u0000", "")
     # Remove other control characters (preserve \n \t \r)
-    import re
     text = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "", text)
     # Remove BOM
     text = text.lstrip("\ufeff")

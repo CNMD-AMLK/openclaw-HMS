@@ -29,6 +29,7 @@ from .consolidation import ConsolidationEngine
 from .forgetting import ForgettingEngine
 from .embed_cache import EmbeddingCache
 from .config_loader import Config
+from .exceptions import HMSError, StoreError, RecallError  # typed exception hierarchy
 
 logger = logging.getLogger(__name__)
 
@@ -115,37 +116,51 @@ class MemoryAdapter:
         """
         url = f"{self._gateway_url}{endpoint}"
         session = self._get_session()
+        last_exc = None
         for attempt in range(3):
             try:
                 resp = session.post(url, json=payload, timeout=self.GATEWAY_TIMEOUT)
                 resp.raise_for_status()
                 return resp.json()
             except requests.exceptions.HTTPError as exc:
+                last_exc = exc
                 status = exc.response.status_code if exc.response is not None else 0
                 if status in (400, 401, 403, 404, 405):
-                    raise
+                    raise HMSError.from_exception(
+                        exc,
+                        context={"url": url, "status": status},
+                    ) from exc
                 if attempt < 2:
                     time.sleep(min(2 ** attempt, 5))
-                else:
-                    raise
             except (requests.exceptions.SSLError, requests.exceptions.InvalidURL,
                     requests.exceptions.InvalidSchema, requests.exceptions.ChunkedEncodingError) as e:
+                last_exc = e
                 logger.warning("Request error calling %s: %s", url, e)
                 if attempt < 2:
                     time.sleep(min(2 ** attempt, 5))
-                else:
-                    raise
             except (requests.exceptions.ConnectionError, requests.exceptions.Timeout):
+                last_exc = last_exc or e
                 if attempt < 2:
                     time.sleep(min(2 ** attempt, 5))
-                else:
-                    raise
             except requests.exceptions.RequestException as e:
+                last_exc = e
                 logger.warning("Unexpected request error for %s: %s", url, e)
                 if attempt < 2:
                     time.sleep(min(2 ** attempt, 5))
-                else:
-                    raise
+
+        if last_exc is not None:
+            if endpoint and "store" in endpoint:
+                raise StoreError.from_gateway_error(
+                    getattr(last_exc.response, "status_code", 0) if hasattr(last_exc, "response") else 0,
+                    str(last_exc), endpoint,
+                ) from last_exc
+            if endpoint and "recall" in endpoint:
+                raise RecallError.from_gateway_error(
+                    getattr(last_exc.response, "status_code", 0) if hasattr(last_exc, "response") else 0,
+                    str(last_exc), endpoint,
+                ) from last_exc
+            raise HMSError.from_exception(last_exc, context={"url": url}) from last_exc
+        raise HMSError("Gateway API call exhausted retries", code="retry_exhausted")
 
     def health_check(self) -> Dict[str, Any]:
         """Verify tool availability or Gateway connectivity."""
@@ -565,7 +580,6 @@ class MemoryManager:
                     )
                 except Exception:
                     pass
-            self.logger = logger
             logger.error("process_pending critical error (recovering unprocessed entries): %s", e)
         return report
 
@@ -768,6 +782,9 @@ class MemoryManager:
             evaluation["to_forget"],
             memory_forget_func=lambda mid: self.adapter.forget(mid),
         )
+
+        # Flush forgetting state after deletions to persist decay state
+        self.forgetting.flush()
 
         return {
             "evaluated": evaluation["report"]["total_evaluated"],

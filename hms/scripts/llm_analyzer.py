@@ -38,7 +38,6 @@ class LLMAnalyzer:
     def __init__(self, config: Optional[Dict[str, Any]] = None) -> None:
         from .config_loader import Config
         self.cfg = config or Config.get()
-        self._model = self.cfg.get("llm_model", "__current__")
         self._timeout = self.cfg.get("llm_timeout_seconds", 30)
         self._max_retries = self.cfg.get("llm_max_retries", 3)
         self._call_count = 0
@@ -52,10 +51,10 @@ class LLMAnalyzer:
         self._rate_limit_per_minute = self.cfg.get("llm_rate_limit_per_minute", 10)
         self._rate_limit_per_hour = self.cfg.get("llm_rate_limit_per_hour", 30)
 
-        # Gateway configuration
+        # Gateway configuration — model assigned once (FIX: was double-assigned before)
         self._gateway_url = self.cfg.get("gateway_url", "http://127.0.0.1:18789")
         self._gateway_token = self.cfg.get("gateway_token", "")
-        self._model = self.cfg.get("llm_model", "openclaw")
+        self._model = self.cfg.get("llm_model", "__current__")
         self._session = requests.Session()
         # Set auth header if token is provided
         if self._gateway_token:

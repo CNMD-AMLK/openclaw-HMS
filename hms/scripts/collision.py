@@ -197,8 +197,8 @@ class CollisionEngine:
                 continue
 
             # Use Chinese-aware tokenization for negation detection
-            new_tokens = tokenize(new_text)
-            mem_tokens_list = tokenize(mem_text)
+            new_tokens = set(tokenize(new_text))
+            mem_tokens = set(tokenize(mem_text))
 
             new_neg = _has_negation(new_text) or any(
                 p.search(new_text) for p in contradiction_patterns
@@ -206,6 +206,9 @@ class CollisionEngine:
             mem_neg = _has_negation(mem_text) or any(
                 p.search(mem_text) for p in contradiction_patterns
             )
+
+            # Token overlap as a secondary signal
+            token_overlap = len(new_tokens & mem_tokens) / max(len(new_tokens | mem_tokens), 1)
 
             new_sentiment = detect_sentiment(new_text)
             mem_sentiment = detect_sentiment(mem_text)
