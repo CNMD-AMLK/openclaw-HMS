@@ -1,5 +1,5 @@
 """
-HMS v3.6 — Unified Memory Manager.
+HMS v3.6.2 — Unified Memory Manager.
 
 Orchestrates the full cognitive memory pipeline:
   perception → collision → storage → consolidation → compression → fingerprint
@@ -50,7 +50,9 @@ class RecallError(Exception):
 class MemoryAdapter:
     """
     All calls to memory-lancedb-pro and graph-memory go through here.
-    Gateway URL is configurable via config or environment variable.
+
+    Primary path: injected tool functions (OpenClaw native tools).
+    Fallback path: HTTP calls to OpenClaw Gateway (for standalone/deployed use).
     """
 
     GATEWAY_TIMEOUT = 10
@@ -59,7 +61,7 @@ class MemoryAdapter:
         # Use unified config if not explicitly provided
         self.cfg = config or Config.get()
         self._tools = tool_impl or {}
-        self._session = requests.Session()
+        self._session: Optional[requests.Session] = None
         self._session_lock = threading.Lock()
 
         # Gateway URL: config > env var > default (Config already resolves env vars)
@@ -70,8 +72,6 @@ class MemoryAdapter:
 
         # Gateway auth token
         self._gateway_token = self.cfg.get("gateway_token", "")
-        if self._gateway_token:
-            self._session.headers["Authorization"] = f"Bearer {self._gateway_token}"
 
         # Dedup threshold
         self._dedup_threshold = self.cfg.get("dedup_similarity_threshold", 0.95)
@@ -80,7 +80,7 @@ class MemoryAdapter:
     def close(self) -> None:
         """Close the HTTP session and release connections."""
         with self._session_lock:
-            if self._session:
+            if self._session is not None:
                 self._session.close()
                 self._session = None
 
@@ -90,107 +90,99 @@ class MemoryAdapter:
     def __exit__(self, *args: Any) -> None:
         self.close()
 
-    def _call_gateway_api(self, endpoint: str, payload: Dict[str, Any]) -> Any:
-        """Call OpenClaw Gateway internal API via HTTP POST with connection pooling and retry."""
-        url = f"{self._gateway_url}{endpoint}"
+    def _get_session(self) -> requests.Session:
+        """Lazy-create the HTTP session (only needed for standalone Gateway mode)."""
+        if self._session is not None:
+            return self._session
         with self._session_lock:
-            for attempt in range(3):
-                try:
-                    resp = self._session.post(url, json=payload, timeout=self.GATEWAY_TIMEOUT)
-                    resp.raise_for_status()
-                    return resp.json()
-                except requests.exceptions.HTTPError as exc:
-                    status = exc.response.status_code if exc.response is not None else 0
-                    # Permanent errors: don't retry
-                    if status in (400, 401, 403, 404, 405):
-                        raise
-                    # Transient errors: retry
-                    if attempt < 2:
-                        time.sleep(min(2 ** attempt, 5))
-                    else:
-                        raise
-                except requests.exceptions.SSLError as e:
-                    logger.warning("SSL error calling %s: %s", url, e)
+            if self._session is not None:
+                return self._session
+            s = requests.Session()
+            if self._gateway_token:
+                s.headers["Authorization"] = f"Bearer {self._gateway_token}"
+            self._session = s
+            return s
+
+    def _call_gateway_api(self, endpoint: str, payload: Dict[str, Any]) -> Any:
+        """Call OpenClaw Gateway internal API via HTTP POST with connection pooling and retry.
+
+        Only used in standalone/deployed mode. Inside OpenClaw, tools are
+        preferred and the HTTP path is a fallback.
+
+        The session lock is only used to create the session (via _get_session);
+        retries run without holding the lock so concurrent calls are not serialized.
+        """
+        url = f"{self._gateway_url}{endpoint}"
+        session = self._get_session()
+        for attempt in range(3):
+            try:
+                resp = session.post(url, json=payload, timeout=self.GATEWAY_TIMEOUT)
+                resp.raise_for_status()
+                return resp.json()
+            except requests.exceptions.HTTPError as exc:
+                status = exc.response.status_code if exc.response is not None else 0
+                if status in (400, 401, 403, 404, 405):
                     raise
-                except requests.exceptions.InvalidURL as e:
-                    logger.warning("Invalid URL %s: %s", url, e)
+                if attempt < 2:
+                    time.sleep(min(2 ** attempt, 5))
+                else:
                     raise
-                except requests.exceptions.InvalidSchema as e:
-                    logger.warning("Invalid schema for %s: %s", url, e)
+            except (requests.exceptions.SSLError, requests.exceptions.InvalidURL,
+                    requests.exceptions.InvalidSchema, requests.exceptions.ChunkedEncodingError) as e:
+                logger.warning("Request error calling %s: %s", url, e)
+                if attempt < 2:
+                    time.sleep(min(2 ** attempt, 5))
+                else:
                     raise
-                except requests.exceptions.ChunkedEncodingError as e:
-                    logger.warning("Chunked encoding error for %s: %s", url, e)
-                    if attempt < 2:
-                        time.sleep(min(2 ** attempt, 5))
-                    else:
-                        raise
-                except (requests.exceptions.ConnectionError, requests.exceptions.Timeout):
-                    if attempt < 2:
-                        time.sleep(min(2 ** attempt, 5))
-                    else:
-                        raise
-                except requests.exceptions.RequestException as e:
-                    logger.warning("Unexpected request error for %s: %s", url, e)
-                    if attempt < 2:
-                        time.sleep(min(2 ** attempt, 5))
-                    else:
-                        raise
+            except (requests.exceptions.ConnectionError, requests.exceptions.Timeout):
+                if attempt < 2:
+                    time.sleep(min(2 ** attempt, 5))
+                else:
+                    raise
+            except requests.exceptions.RequestException as e:
+                logger.warning("Unexpected request error for %s: %s", url, e)
+                if attempt < 2:
+                    time.sleep(min(2 ** attempt, 5))
+                else:
+                    raise
 
     def health_check(self) -> Dict[str, Any]:
-        """Verify Gateway connectivity and memory API endpoints."""
+        """Verify tool availability or Gateway connectivity."""
         result = {
+            "tools_available": bool(self._tools),
+            "memory_tool": "memory_store" in self._tools,
+            "recall_tool": "memory_recall" in self._tools,
+            "graph_tool": "gm_record" in self._tools,
             "gateway_reachable": False,
-            "memory_api_available": False,
-            "graph_api_available": False,
-            "gateway_url": self._gateway_url,
             "errors": [],
         }
-        # Check gateway reachability
+        # If tools are available, we're good — no need to probe Gateway
+        if self._tools.get("memory_store"):
+            result["memory_api_available"] = True
+            result["overall"] = "healthy"
+            return result
+        # Standalone mode: probe Gateway HTTP
         try:
-            with self._session_lock:
-                resp = self._session.get(
-                    f"{self._gateway_url}/health",
-                    timeout=5,
-                )
+            session = self._get_session()
+            resp = session.get(f"{self._gateway_url}/health", timeout=5)
             if resp.status_code == 200:
                 result["gateway_reachable"] = True
+                result["memory_api_available"] = True
+                result["overall"] = "healthy"
+            else:
+                result["errors"].append(f"Gateway health returned HTTP {resp.status_code}")
+                result["overall"] = "degraded"
         except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
             result["errors"].append(f"Gateway unreachable: {e}")
-            return result
-
-        # Check memory API — these are internal plugin endpoints, may not be exposed via HTTP
-        try:
-            with self._session_lock:
-                resp = self._session.post(
-                    f"{self._gateway_url}/api/tools/memory-recall",
-                    json={"query": "health", "top_k": 1},
-                    timeout=5,
-                )
-            if resp.status_code in (200, 400, 422):
-                result["memory_api_available"] = True
-            else:
-                result["errors"].append(f"Memory API returned HTTP {resp.status_code}")
-        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
-            result["errors"].append(f"Memory API error: {e}")
-
-        # Check graph API
-        try:
-            with self._session_lock:
-                resp = self._session.post(
-                    f"{self._gateway_url}/api/tools/gm-search",
-                    json={"query": "health", "depth": 1},
-                    timeout=5,
-                )
-            if resp.status_code in (200, 400, 422):
-                result["graph_api_available"] = True
-            else:
-                result["errors"].append(f"Graph API returned HTTP {resp.status_code}")
-        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
-            result["errors"].append(f"Graph API error: {e}")
-
+            result["overall"] = "degraded"
         return result
 
     def store(self, text: str, category: str, importance: int, metadata: str) -> Any:
+        """Store a memory. Tries native tool first, falls back to Gateway HTTP."""
+        fn = self._tools.get("memory_store")
+        if fn:
+            return fn(text=text, category=category, importance=importance, metadata=metadata)
+        # Fallback: Gateway HTTP
         try:
             return self._call_gateway_api("/api/tools/memory-store", {
                 "text": text,
@@ -199,13 +191,16 @@ class MemoryAdapter:
                 "metadata": metadata,
             })
         except Exception as e:
-            fn = self._tools.get("memory_store")
-            if fn:
-                return fn(text=text, category=category, importance=importance, metadata=metadata)
-            logger.warning("Gateway store failed: %s", e)
+            logger.warning("Memory store failed (no tool, Gateway fallback error): %s", e)
             raise StoreError(f"store failed: {e}")
 
     def recall(self, query: str, top_k: int = 5, category: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Recall memories. Tries native tool first, falls back to Gateway HTTP."""
+        fn = self._tools.get("memory_recall")
+        if fn:
+            memories = fn(query=query, top_k=top_k, category=category) or []
+            return self._filter_forgotten(memories)
+        # Fallback: Gateway HTTP
         try:
             result = self._call_gateway_api("/api/tools/memory-recall", {
                 "query": query,
@@ -215,11 +210,7 @@ class MemoryAdapter:
             memories = result if isinstance(result, list) else []
             return self._filter_forgotten(memories)
         except Exception as e:
-            fn = self._tools.get("memory_recall")
-            if fn:
-                memories = fn(query=query, top_k=top_k, category=category) or []
-                return self._filter_forgotten(memories)
-            logger.warning("Gateway recall failed: %s", e)
+            logger.warning("Memory recall failed (no tool, Gateway fallback error): %s", e)
             raise RecallError(f"recall failed: {e}")
 
     @staticmethod
@@ -235,8 +226,12 @@ class MemoryAdapter:
         return {"status": "stubbed"}
 
     def forget(self, memory_id: str) -> Any:
-        """Delete a memory. Tries dedicated delete API first, falls back to soft-delete."""
-        # Try dedicated delete endpoint
+        """Delete a memory. Tries native tool first, falls back to Gateway HTTP."""
+        # Try injected tool first (native OpenClaw path)
+        fn = self._tools.get("memory_forget")
+        if fn:
+            return fn(memory_id=memory_id)
+        # Fallback: Gateway HTTP
         try:
             result = self._call_gateway_api("/api/tools/memory-forget", {
                 "memory_id": memory_id,
@@ -244,10 +239,6 @@ class MemoryAdapter:
             return result
         except Exception as e:
             logger.debug("Gateway forget failed: %s", e)
-        # Try injected tool
-        fn = self._tools.get("memory_forget")
-        if fn:
-            return fn(memory_id=memory_id)
         # Last resort: soft-delete via update with importance=0
         try:
             return self._call_gateway_api("/api/tools/memory-update", {
@@ -260,6 +251,10 @@ class MemoryAdapter:
             return {"status": "stubbed", "memory_id": memory_id}
 
     def graph_record(self, source: str, target: str, relation: str, context: str = "") -> Any:
+        """Record a graph edge. Tries native tool first, falls back to Gateway HTTP."""
+        fn = self._tools.get("gm_record")
+        if fn:
+            return fn(source=source, target=target, relation=relation, context=context)
         try:
             return self._call_gateway_api("/api/tools/gm-record", {
                 "source": source,
@@ -268,13 +263,14 @@ class MemoryAdapter:
                 "context": context,
             })
         except Exception as e:
-            fn = self._tools.get("gm_record")
-            if fn:
-                return fn(source=source, target=target, relation=relation, context=context)
-            logger.warning("Gateway gm-record failed: %s", e)
+            logger.warning("Graph record failed (no tool, Gateway fallback error): %s", e)
             raise StoreError(f"graph_record failed: {e}")
 
     def graph_search(self, query: str, depth: int = 2) -> List[Dict[str, Any]]:
+        """Search the knowledge graph. Tries native tool first, falls back to Gateway HTTP."""
+        fn = self._tools.get("gm_search")
+        if fn:
+            return fn(query=query, depth=depth) or []
         try:
             result = self._call_gateway_api("/api/tools/gm-search", {
                 "query": query,
@@ -282,36 +278,37 @@ class MemoryAdapter:
             })
             return result if isinstance(result, list) else []
         except Exception as e:
-            fn = self._tools.get("gm_search")
-            if fn:
-                return fn(query=query, depth=depth) or []
-            logger.warning("Gateway gm-search failed: %s", e)
+            logger.warning("Graph search failed (no tool, Gateway fallback error): %s", e)
             raise RecallError(f"graph_search failed: {e}")
 
     def store_with_dedup(
         self, text: str, category: str, importance: int, metadata: str,
         embed_cache: Optional[EmbeddingCache] = None,
     ) -> Any:
-        """Store memory with deduplication using embedding similarity."""
-        if embed_cache is None:
-            # No embedding cache, fall back to plain store
-            return self.store(text, category, importance, metadata)
+        """Store memory with deduplication using embedding similarity.
 
+        Dedup is best-effort — if recall is unavailable (no tools, no Gateway),
+        falls back to plain store without raising.
+        """
         with self._dedup_lock:
-            # Search for similar existing memories
-            similar = self.recall(query=text, top_k=3)
-            for mem in similar:
-                existing_text = mem.get("text", "")
-                if not existing_text:
-                    continue
-                sim = embed_cache.similarity(text, existing_text)
-                if sim >= self._dedup_threshold:
-                    # Update existing memory instead of creating new one
-                    logger.info(
-                        "Dedup: merging into existing memory %s (similarity=%.3f)",
-                        mem.get("id", ""), sim,
-                    )
-                    return self.update(mem["id"], importance=max(mem.get("importance", 0), importance))
+            if embed_cache is not None:
+                try:
+                    similar = self.recall(query=text, top_k=3)
+                except (RecallError, StoreError):
+                    logger.debug("Recall unavailable for dedup, storing without dedup check")
+                    similar = []
+                for mem in similar:
+                    existing_text = mem.get("text", "")
+                    if not existing_text:
+                        continue
+                    sim = embed_cache.similarity(text, existing_text)
+                    if sim >= self._dedup_threshold:
+                        # Update existing memory instead of creating new one
+                        logger.info(
+                            "Dedup: merging into existing memory %s (similarity=%.3f)",
+                            mem.get("id", ""), sim,
+                        )
+                        return self.update(mem["id"], importance=max(mem.get("importance", 0), importance))
 
             return self.store(text, category, importance, metadata)
 
@@ -323,7 +320,7 @@ class MemoryAdapter:
 
 class MemoryManager:
     """
-    Main HMS v3.6.1 orchestrator. Ties all modules together.
+    Main HMS v3.6.2 orchestrator. Ties all modules together.
 
     Entry points:
       - on_message_received(): sync perception + context injection
@@ -443,7 +440,9 @@ class MemoryManager:
             user_message = user_message[:MAX_MESSAGE_LENGTH] + "..."
 
         # 1. Quick perception (heuristic only — no LLM for sync path)
-        perception = self.perception.analyze(user_message, force_heuristic=True)
+        # assistant_reply is intentionally empty here; reply is not yet generated.
+        # Full analysis with assistant_reply happens later in _process_single_entry.
+        perception = self.perception.analyze(user_message, assistant_reply="", force_heuristic=True)
 
         # 2. Retrieve related memories
         try:
@@ -548,7 +547,7 @@ class MemoryManager:
                 self._process_single_entry(entry, report)
                 report["processed"] += 1
             except Exception as e:
-                report["errors"].append(f"entry: {e}")
+                report["errors"].append(f"entry {entry.get('timestamp', '?')}: {e}")
 
         return report
 
@@ -594,11 +593,14 @@ class MemoryManager:
         except Exception as e:
             report["errors"].append(f"store: {e}")
 
-        # 3. Collision detection
-        retrieved = self.adapter.recall(
-            query=user_msg,
-            top_k=self.cfg.get("retrieval_top_k", 5),
-        )
+        # 3. Collision detection (best-effort: skip if recall unavailable)
+        try:
+            retrieved = self.adapter.recall(
+                query=user_msg,
+                top_k=self.cfg.get("retrieval_top_k", 5),
+            )
+        except RecallError:
+            retrieved = []
         if retrieved:
             collision_result = self.collision_engine.collide(perception, retrieved)
             exec_report = self.collision_engine.execute_results(

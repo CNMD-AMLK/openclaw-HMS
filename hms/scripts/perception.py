@@ -1,5 +1,5 @@
 """
-HMS v3 — Perception Engine.
+HMS v3.6.2 — Perception Engine.
 
 LLM-driven perception analysis. Falls back to lightweight heuristics.
 Replaces v1's dictionary-based approach entirely.

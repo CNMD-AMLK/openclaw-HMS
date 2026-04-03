@@ -1,5 +1,5 @@
 """
-HMS v3.6 — Consolidation Engine.
+HMS v3.6.2 — Consolidation Engine.
 
 LLM-driven memory consolidation: replay, compression, relation discovery.
 Replaces v1's frequency-based clustering with semantic understanding.

@@ -5,6 +5,7 @@ Usage:
     python -m hms process_pending
     python -m hms consolidate
     python -m hms forget
+    python -m hms health
 """
 
 from __future__ import annotations
