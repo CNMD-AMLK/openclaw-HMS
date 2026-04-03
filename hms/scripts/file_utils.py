@@ -31,19 +31,24 @@ _thread_locks_lock = threading.Lock()
 
 
 def _get_lock_fd(path: str) -> int:
-    """Get or create a cached lock file descriptor for the given path."""
-    if path not in _lock_fds:
-        lock_path = path + ".lock"
-        os.makedirs(os.path.dirname(lock_path) or ".", exist_ok=True)
-        with _lock_fds_lock:
-            if path not in _lock_fds:
-                fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
-                _lock_fds[path] = fd
-                _lock_fd_counts[fd] = _lock_fd_counts.get(fd, 0) + 1
-                return fd
-    fd = _lock_fds[path]
-    _lock_fd_counts[fd] = _lock_fd_counts.get(fd, 0) + 1
-    return fd
+    """Get or create a cached lock file descriptor for the given path.
+
+    Creates a new FD if needed (with refcount=1), but does NOT increment
+    refcount on lookup. The caller (file_lock) is responsible for incrementing.
+    """
+    if path in _lock_fds:
+        return _lock_fds[path]
+
+    lock_path = path + ".lock"
+    os.makedirs(os.path.dirname(lock_path) or ".", exist_ok=True)
+    with _lock_fds_lock:
+        # Double-check after acquiring lock
+        if path in _lock_fds:
+            return _lock_fds[path]
+        fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+        _lock_fds[path] = fd
+        _lock_fd_counts[fd] = 1  # initial ref = 1 from file_lock increment below
+        return fd
 
 
 @contextmanager
@@ -55,8 +60,10 @@ def file_lock(path: str, mode: str = "exclusive"):
     """
     if _HAS_FCNTL:
         fd = _get_lock_fd(path)
-        fcntl.flock(fd, fcntl.LOCK_EX)
+        with _lock_fds_lock:
+            _lock_fd_counts[fd] = _lock_fd_counts.get(fd, 0) + 1
         try:
+            fcntl.flock(fd, fcntl.LOCK_EX)
             yield fd
         finally:
             fcntl.flock(fd, fcntl.LOCK_UN)
@@ -72,6 +79,9 @@ def file_lock(path: str, mode: str = "exclusive"):
                     paths_to_remove = [p for p, f in _lock_fds.items() if f == fd]
                     for p in paths_to_remove:
                         _lock_fds.pop(p, None)
+            # Remove path from _lock_fds mapping (always done, even if FD stays open)
+            with _lock_fds_lock:
+                _lock_fds.pop(path, None)
     else:
         # Windows fallback: thread-level lock (not cross-process)
         if path not in _thread_locks:

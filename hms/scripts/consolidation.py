@@ -40,9 +40,14 @@ class ConsolidationEngine:
       5. Relation discovery
     """
 
-    def __init__(self, config: Optional[Dict[str, Any]] = None) -> None:
+    def __init__(
+        self,
+        config: Optional[Dict[str, Any]] = None,
+        *,
+        llm: Optional[LLMAnalyzer] = None,
+    ) -> None:
         self.cfg = config or {}
-        self.llm = LLMAnalyzer(self.cfg)
+        self.llm = llm or LLMAnalyzer(self.cfg)  # inject shared or create own
         self.embed_cache: Optional[EmbeddingCache] = None
 
     # ==================================================================

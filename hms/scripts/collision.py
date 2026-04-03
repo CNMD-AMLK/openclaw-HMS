@@ -31,9 +31,14 @@ class CollisionEngine:
       3. Heuristic fallback — when LLM unavailable
     """
 
-    def __init__(self, config: Optional[Dict[str, Any]] = None) -> None:
+    def __init__(
+        self,
+        config: Optional[Dict[str, Any]] = None,
+        *,
+        llm: Optional[LLMAnalyzer] = None,
+    ) -> None:
         self.cfg = config or {}
-        self.llm = LLMAnalyzer(self.cfg)
+        self.llm = llm or LLMAnalyzer(self.cfg)  # inject shared or create own
         self.embed_cache: Optional[EmbeddingCache] = None
         self._embed_threshold = self.cfg.get("embed_similarity_threshold", 0.3)
         self._embed_max_candidates = self.cfg.get("embed_max_candidates", 10)

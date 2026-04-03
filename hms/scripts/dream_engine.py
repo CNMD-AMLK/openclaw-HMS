@@ -271,6 +271,9 @@ class DreamEngine:
         while queue:
             curr, path = queue.popleft()
             if len(path) >= max_depth:
+                # Record the endpoint pair before returning
+                pair = (memories[path[0]]["id"], memories[path[-1]]["id"])
+                seen_pairs.add(pair)
                 return path
             for neighbor in adj.get(curr, []):
                 if neighbor not in visited:

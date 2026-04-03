@@ -23,6 +23,7 @@ import requests
 
 from .perception import PerceptionEngine
 from .collision import CollisionEngine
+from .llm_analyzer import LLMAnalyzer
 from .context_manager import ContextManager
 from .consolidation import ConsolidationEngine
 from .forgetting import ForgettingEngine
@@ -345,16 +346,19 @@ class MemoryManager:
         # Init adapter with config for gateway_url
         self.adapter = MemoryAdapter(self.cfg, tool_impl)
 
-        # Init sub-modules
-        self.perception = PerceptionEngine(self.cfg)
-        self.collision_engine = CollisionEngine(self.cfg)
+        # Shared LLMAnalyzer instance — prevents token budget duplication
+        self.llm = LLMAnalyzer(self.cfg)
+
+        # Init sub-modules (all share self.llm)
+        self.perception = PerceptionEngine(self.cfg, llm=self.llm)
+        self.collision_engine = CollisionEngine(self.cfg, llm=self.llm)
         self.forgetting = ForgettingEngine({
             **self.cfg,
             "decay_cache_path": os.path.join(
                 self.cfg.get("cache_dir", "cache"), "decay_state.json"
             ),
         })
-        self.consolidation = ConsolidationEngine(self.cfg)
+        self.consolidation = ConsolidationEngine(self.cfg, llm=self.llm)
         self.context = ContextManager({
             **self.cfg,
             "pending_path": os.path.join(
@@ -542,13 +546,27 @@ class MemoryManager:
                     for line in existing_lines:
                         f.write(line)
 
-        for entry in entries:
-            try:
-                self._process_single_entry(entry, report)
-                report["processed"] += 1
-            except Exception as e:
-                report["errors"].append(f"entry {entry.get('timestamp', '?')}: {e}")
-
+        try:
+            for entry in entries:
+                try:
+                    self._process_single_entry(entry, report)
+                    report["processed"] += 1
+                except Exception as e:
+                    report["errors"].append(f"entry {entry.get('timestamp', '?')}: {e}")
+        except Exception as e:
+            # Rollback unprocessed entries to prevent permanent data loss
+            for entry in entries[report["processed"]:]:
+                try:
+                    self.context.enqueue(
+                        entry["user_message"],
+                        entry["assistant_reply"],
+                        entry.get("session_id", ""),
+                        entry.get("timestamp", ""),
+                    )
+                except Exception:
+                    pass
+            self.logger = logger
+            logger.error("process_pending critical error (recovering unprocessed entries): %s", e)
         return report
 
     def _process_single_entry(
@@ -765,15 +783,7 @@ class MemoryManager:
         except Exception:
             pass
         try:
-            self.perception.llm.close()
-        except Exception:
-            pass
-        try:
-            self.collision_engine.llm.close()
-        except Exception:
-            pass
-        try:
-            self.consolidation.llm.close()
+            self.llm.close()  # shared LLMAnalyzer
         except Exception:
             pass
         try:

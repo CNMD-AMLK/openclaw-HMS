@@ -435,16 +435,24 @@ class MemoryOverwriter:
         if not candidate_text:
             return {"superseded": False}
 
+        # Check if candidate is already superseded
+        meta = candidate.get("metadata", {})
+        if isinstance(meta, dict) and meta.get("superseded"):
+            return {"superseded": True, "reason": "already superseded"}
+
+        # Actually detect conflicts with other memories
         for other in all_memories:
             if other.get("id", "") == candidate.get("id", ""):
                 continue
 
-            meta = candidate.get("metadata", {})
-            if isinstance(meta, dict) and meta.get("superseded"):
-                # Already superseded, skip
-                return {"superseded": True, "reason": "already superseded"}
+            other_text = other.get("text", "").lower()
+            if not other_text:
+                continue
 
-        return {"superseded": False}
+            # FIX: actually call _detect_conflict!
+            if self._detect_conflict(candidate_text, other_text):
+                # Attempt to handle the conflict (supersede older if newer is more confident)
+                return self.handle_conflict(other, candidate)
 
     def _detect_conflict(self, text_a: str, text_b: str) -> bool:
         """

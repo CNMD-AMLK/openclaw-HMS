@@ -130,6 +130,7 @@ class CreativeAssociator:
         Multi-hop traversal starting from the given entity/topic.
 
         Uses the knowledge graph to find entities reachable within max_hops.
+        Tracks seen endpoint pairs to avoid duplicate paths and cycles.
         """
         # Build entity-topic graph from memories
         graph: Dict[str, Set[str]] = {}  # entity → {related entities}
@@ -166,6 +167,7 @@ class CreativeAssociator:
 
         from collections import deque
         paths: List[List[Dict[str, Any]]] = []
+        seen_pairs: Set[tuple] = set()  # track (start, end) pairs to avoid duplicates
         queue: deque = deque([(start_lower, [{
             "entity": start_lower,
             "role": "source",
@@ -180,13 +182,21 @@ class CreativeAssociator:
 
             if depth >= max_hops:
                 # Record this path at max depth
-                paths.append(list(current_path))
+                end_entity = current_path[-1]["entity"]
+                pair = (start_lower, end_entity)
+                if pair not in seen_pairs:
+                    seen_pairs.add(pair)
+                    paths.append(list(current_path))
                 continue
 
             # BFS expansion
             neighbors = graph.get(current_node, set())
             if not neighbors:
-                paths.append(list(current_path))
+                end_entity = current_path[-1]["entity"]
+                pair = (start_lower, end_entity)
+                if pair not in seen_pairs:
+                    seen_pairs.add(pair)
+                    paths.append(list(current_path))
                 continue
 
             for neighbor in neighbors:
@@ -196,14 +206,19 @@ class CreativeAssociator:
                         "role": "intermediate" if depth < max_hops - 1 else "target",
                         "memories": self._find_memories_with(neighbor, memories),
                     }]
-                    paths.append(list(new_path))
 
                     if depth < max_hops - 1:
                         visited.add(neighbor)
                         queue.append((neighbor, new_path))
-
                         if depth == 0:
                             found_at_depth[depth] = found_at_depth.get(depth, 0) + 1
+
+                    # Also record this intermediate path (dedup by endpoint pair)
+                    end_entity = neighbor
+                    pair = (start_lower, end_entity)
+                    if pair not in seen_pairs:
+                        seen_pairs.add(pair)
+                        paths.append(list(new_path))
 
         # Limit to prevent combinatorial explosion
         paths.sort(key=lambda p: len(p), reverse=True)
