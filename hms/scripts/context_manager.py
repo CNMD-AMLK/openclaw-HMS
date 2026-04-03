@@ -1,5 +1,5 @@
 """
-HMS v3.2 — Context Manager.
+HMS v3.6 — Context Manager.
 
 Three-layer infinite context architecture:
   Layer 1: Working memory (recent turns)
@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 
 class ContextManager:
     """
-    Orchestrates the HMS v3.2 cognitive layer:
+    Orchestrates the HMS v3.6.1 cognitive layer:
       - Async perception pipeline (pending -> batch LLM analysis)
       - Three-layer context composition for infinite context
       - Dynamic token budget allocation

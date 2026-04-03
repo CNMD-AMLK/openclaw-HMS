@@ -1,5 +1,5 @@
 """
-HMS v3.2 — Collision Engine.
+HMS v3.6 — Collision Engine.
 
 LLM-driven semantic collision detection with embedding pre-filtering.
 Replaces v1's keyword-overlap approach with deep semantic analysis.

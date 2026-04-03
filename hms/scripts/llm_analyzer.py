@@ -1,5 +1,5 @@
 """
-HMS v3.2 — LLM Analyzer Core.
+HMS v3.6 — LLM Analyzer Core.
 
 Replaces all dictionary-based analysis with LLM calls.
 Falls back to lightweight heuristics when LLM is unavailable.
