@@ -1,11 +1,12 @@
 {
   "_comment": "HMS v4 Plugin Integration — Example openclaw.json section",
-  "_doc": "Add this to your openclaw.json under the appropriate section",
+  "_doc": "Add this to your openclaw.json plugins.entries section",
+  "_note": "HMS v4.0 零外部记忆依赖：自带本地文件存储降级，不依赖 memory-lancedb 等插件",
 
   "plugins": {
     "entries": {
       "hms-memory": {
-        "path": "/tmp/openclaw-HMS",
+        "path": "/path/to/openclaw-HMS",
         "config": {
           "perception_mode": "lite",
           "context_tier": "auto",
@@ -13,18 +14,10 @@
           "token_budget_daily": 50000,
           "collision_threshold": 0.7,
           "consolidate_interval": "0 3 * * *",
-          "forget_interval": "0 4 * * 0"
+          "forget_interval": "0 4 * * 0",
+          "gateway_url": "http://127.0.0.1:18789"
         }
       }
-    }
-  },
-
-  "memory": {
-    "hms": {
-      "enabled": true,
-      "plugin": "hms-memory",
-      "perception_mode": "lite",
-      "context_tier": "auto"
     }
   }
 }

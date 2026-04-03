@@ -14,9 +14,15 @@ v3 进化：**多档位上下文窗口支持 + Embedding 预过滤降本 60-70%*
 ### 安装
 
 ```bash
-cd /tmp/openclaw-HMS
+cd /path/to/openclaw-HMS
 bash setup.sh
 ```
+
+**零外部依赖**：HMS 自带本地文件存储，不依赖任何第三方记忆插件。
+
+- 有 OpenClaw `memory-lancedb` 插件 → 自动对接
+- 没有 → 自动降级到本地文件存储（`cache/` 目录）
+- 有 `graph-memory` 插件 → 知识图谱自动兼容
 
 ### 作为 OpenClaw 插件加载（v4 推荐方式）
 
@@ -192,3 +198,4 @@ openclaw-HMS/
 | 信念冲突 | 覆盖/删除 | **superseded 标记 + 渐进降级** |
 | 配置文件 | 50+ 项 | **~10 项 (其余内置默认值)** |
 | MemoryAdapter | tool → HTTP → stub 三层 | **直接工具注入 + HTTP 可选** |
+| 外部依赖 | 需要 memory-lancedb 或 graph-memory | **零外部依赖，完全自给自足** |
