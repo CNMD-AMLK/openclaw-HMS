@@ -1,5 +1,5 @@
 """
-HMS v3.6.2 — OpenClaw Integration via Cron/Skill Interface
+HMS — OpenClaw Integration via Cron/Skill Interface
 
 OpenClaw does not expose a native hook registration API.
 Instead, HMS integrates through:

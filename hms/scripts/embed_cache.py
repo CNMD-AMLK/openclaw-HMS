@@ -1,5 +1,5 @@
 """
-HMS v3.6.2 — Embedding Cache & Similarity Engine.
+HMS — Embedding Cache & Similarity Engine.
 
 Provides local embedding computation for pre-filtering memories before
 expensive LLM calls. Reduces LLM usage by 60-70%.

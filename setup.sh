@@ -1,6 +1,6 @@
 #!/bin/bash
 # ============================================================================
-# HMS v3 Setup Script — Hierarchical Memory Scaffold (LLM-driven)
+# HMS Setup Script — Hierarchical Memory Scaffold (LLM-driven)
 #
 # Usage: bash setup.sh
 # ============================================================================
@@ -11,7 +11,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HMS_DIR="${SCRIPT_DIR}/hms"
 
 echo "============================================"
-echo "HMS v3 Setup — LLM-driven Cognitive Memory"
+echo "HMS Setup — LLM-driven Cognitive Memory"
 echo "============================================"
 echo ""
 

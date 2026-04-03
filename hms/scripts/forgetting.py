@@ -1,5 +1,5 @@
 """
-HMS v3 — Forgetting Engine.
+HMS — Forgetting Engine.
 
 Ebbinghaus-inspired multi-factor memory decay with emotional modulation.
 Optimized from v1 with better half-life scaling and immortal guards.

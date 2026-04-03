@@ -1,5 +1,5 @@
 {
-  "_comment": "HMS v3.6.3 Configuration — OpenClaw Gateway compatible, multi-tier context support",
+  "_comment": "HMS Configuration — OpenClaw Gateway compatible, multi-tier context support",
 
   "cache_dir": "cache",
 

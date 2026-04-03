@@ -1,4 +1,4 @@
-"""HMS v3.6.3 — Hierarchical Memory Scaffold.
+"""HMS — Hierarchical Memory Scaffold.
 
 Integration fixes for OpenClaw:
 - MemoryAdapter: native tool-first with Gateway HTTP fallback
@@ -7,9 +7,8 @@ Integration fixes for OpenClaw:
 - Security: no hardcoded secrets, env whitelist, token redaction
 - setup_wizard CLI for easy onboarding
 """
-__version__ = "3.6.3"
 
-# v3.6.3: Only setup logging when running as standalone CLI,
+# Only setup logging when running as standalone CLI,
 # NOT when imported as a module (avoids clobbering caller's logging config).
 import sys as _sys
 if hasattr(_sys, "argv") and len(_sys.argv) > 0:
