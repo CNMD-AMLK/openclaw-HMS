@@ -102,11 +102,13 @@ class LLMAnalyzer:
 
     @classmethod
     def _load_env(cls) -> None:
-        """Load .env file if exists, with whitelist protection."""
-        # Try multiple paths: package root, cwd, ~/.hms/
+        """Load .env file if exists, with whitelist protection.
+
+        Security: Only loads from fixed paths (package root or ~/.hms/).
+        Never loads from cwd() to prevent directory-based config injection.
+        """
         candidates = [
             Path(__file__).parent.parent.parent / ".env",
-            Path.cwd() / ".env",
             Path.home() / ".hms" / ".env",
         ]
         env_path = None
@@ -124,6 +126,13 @@ class LLMAnalyzer:
                     key, val = line.split("=", 1)
                     key = key.strip()
                     if key in cls._ALLOWED_ENV_KEYS:
+                        existing = os.environ.get(key)
+                        if existing:
+                            logger.debug(
+                                "Env key %s already set, .env value will be ignored. "
+                                "HMS uses setdefault for security (system env takes priority).",
+                                key,
+                            )
                         os.environ.setdefault(key, val.strip())
         cls._env_loaded = True
 
@@ -343,8 +352,8 @@ class LLMAnalyzer:
         content = message.get("content")
         if content:
             return content.strip()
-        # Some models may return reasoning instead of content
-        reasoning = message.get("reasoning")
+        # v3.6.3: some providers (o-series) may put reasoning in extended field
+        reasoning = message.get("reasoning") or message.get("reasoning_content")
         if reasoning:
             return reasoning.strip()
         return None

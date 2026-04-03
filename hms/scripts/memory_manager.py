@@ -289,13 +289,19 @@ class MemoryAdapter:
 
         Dedup is best-effort — if recall is unavailable (no tools, no Gateway),
         falls back to plain store without raising.
+
+        v3.6.3: Log warning when embed_cache is None or recall unavailable
+        so operators know dedup is silently disabled.
         """
         with self._dedup_lock:
             if embed_cache is not None:
                 try:
                     similar = self.recall(query=text, top_k=3)
                 except (RecallError, StoreError):
-                    logger.debug("Recall unavailable for dedup, storing without dedup check")
+                    logger.warning(
+                        "Dedup: recall unavailable, storing without dedup check. "
+                        "This means duplicate memories may accumulate.",
+                    )
                     similar = []
                 for mem in similar:
                     existing_text = mem.get("text", "")
@@ -309,6 +315,11 @@ class MemoryAdapter:
                             mem.get("id", ""), sim,
                         )
                         return self.update(mem["id"], importance=max(mem.get("importance", 0), importance))
+            else:
+                logger.warning(
+                    "Dedup: embed_cache is None, storing without dedup check. "
+                    "Duplicate memories may accumulate.",
+                )
 
             return self.store(text, category, importance, metadata)
 
@@ -433,7 +444,12 @@ class MemoryManager:
         Does lightweight perception + context injection.
 
         Returns context to inject into the agent's turn.
+
+        v3.6.3: sanitize user input to remove null/control chars.
+        assistant_reply is intentionally empty (reply not yet generated).
         """
+        from .utils import sanitize_text
+        user_message = sanitize_text(user_message)
         MAX_MESSAGE_LENGTH = 4096
         if len(user_message) > MAX_MESSAGE_LENGTH:
             logger.warning("Message too long (%d chars), truncating to %d", len(user_message), MAX_MESSAGE_LENGTH)
@@ -556,9 +572,14 @@ class MemoryManager:
         entry: Dict[str, Any],
         report: Dict[str, Any],
     ) -> None:
-        """Process one pending entry: perceive → collide → store."""
-        user_msg = entry.get("user_message", "")
-        reply = entry.get("assistant_reply", "")
+        """Process one pending entry: perceive → collide → store.
+
+        v3.6.3: sanitize user input to prevent injection and control chars.
+        """
+        from .utils import sanitize_text
+
+        user_msg = sanitize_text(entry.get("user_message", ""))
+        reply = sanitize_text(entry.get("assistant_reply", ""))
 
         # 1. Perception: heuristic-only for async path (LLM calls gated by importance score)
         perception = self.perception.analyze(user_msg, reply, force_heuristic=True)
@@ -581,9 +602,10 @@ class MemoryManager:
             "topics": perception.get("topics", []),
         }, ensure_ascii=False)
 
+        store_text = sanitize_text(perception.get("text_for_store", user_msg))
         try:
             self.adapter.store_with_dedup(
-                text=perception.get("text_for_store", user_msg),
+                text=store_text,
                 category=perception.get("category", "fact"),
                 importance=perception.get("importance", 5),
                 metadata=metadata,
@@ -691,16 +713,27 @@ class MemoryManager:
             replay_candidates = self.consolidation.select_for_replay(all_memories, max_count=20)
             for mem in replay_candidates:
                 mid = mem.get("id", "")
-                # Get related memories from pre-fetched all_memories (avoid recall API calls)
-                mem_text = mem.get("text", "")[:100]
-                related = [
-                    m for m in all_memories
-                    if m.get("id", "") != mid and mem_text[:20] in m.get("text", "")
-                ][:5]
-                if not related:
-                    related = self.adapter.recall(
-                        query=mem.get("text", "")[:100], top_k=5
-                    )
+                # v3.6.3: Use local keyword overlap from all_memories instead of O(n*m)
+                # substring match. Only falls back to recall API if no overlap found.
+                mem_text = mem.get("text", "")
+                from .utils import tokenize
+                mem_tokens = set(tokenize(mem_text))
+                local_related = []
+                for m in all_memories:
+                    if m.get("id", "") == mid:
+                        continue
+                    rel_text = m.get("text", "")
+                    rel_tokens = set(tokenize(rel_text))
+                    if not rel_tokens:
+                        continue
+                    overlap = len(mem_tokens & rel_tokens) / max(len(mem_tokens | rel_tokens), 1)
+                    if overlap > 0.15:  # Lower threshold to catch more candidates
+                        local_related.append(m)
+                        if len(local_related) >= 5:
+                            break
+                related = local_related if local_related else self.adapter.recall(
+                    query=mem.get("text", "")[:100], top_k=5
+                )
                 result = self.consolidation.replay_memory(mem, related)
                 if result.get("issues"):
                     try:

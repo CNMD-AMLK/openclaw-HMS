@@ -97,22 +97,14 @@ class ForgettingEngine:
         self._dirty = True
 
     def flush(self) -> None:
-        """Persist decay state to disk if dirty."""
+        """Persist decay state to disk if dirty.
+
+        v3.6.3: Use atomic_write_json with file_lock for consistency
+        and concurrency safety (was duplicating atomic_write_json logic).
+        """
         if self._dirty:
-            import tempfile as _tmp
-            _dir = os.path.dirname(self._cache_path) or "."
-            os.makedirs(_dir, exist_ok=True)
-            _fd, _tmp_path = _tmp.mkstemp(dir=_dir, suffix=".tmp")
-            try:
-                with os.fdopen(_fd, "w", encoding="utf-8") as _f:
-                    json.dump(self._states, _f, ensure_ascii=False, indent=2)
-                os.replace(_tmp_path, self._cache_path)
-            except Exception:
-                try:
-                    os.unlink(_tmp_path)
-                except OSError:
-                    pass
-                raise
+            with file_lock(self._cache_path):
+                atomic_write_json(self._cache_path, self._states)
             self._dirty = False
 
     # ==================================================================

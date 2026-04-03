@@ -1,5 +1,5 @@
 {
-  "_comment": "HMS v3.6.2 Configuration — OpenClaw Gateway compatible, multi-tier context support",
+  "_comment": "HMS v3.6.3 Configuration — OpenClaw Gateway compatible, multi-tier context support",
 
   "cache_dir": "cache",
 
@@ -58,6 +58,7 @@
 
   "_comment_pending": "=== Pending Queue Configuration ===",
   "max_pending_size": 1000,
+  "process_pending_max_batch": 50,
 
   "_comment_context": "=== Context Window Tiers ===",
   "_comment_tiers": "32k=low, 128k=mid, 256k=default, 1M=ultra",

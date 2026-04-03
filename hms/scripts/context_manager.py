@@ -110,16 +110,16 @@ class ContextManager:
                         pass
                 raise
 
-        # Phase 2: Atomically replace all files under lock (batch rename)
-        # Lock the first file as the coordination lock
-        first_key = next(iter(all_keys))
-        first_path = file_map[first_key][0]
-        with file_lock(first_path):
+        # Phase 2: Atomically replace all files under a dedicated global lock.
+        # v3.6.3: use a dedicated .save_state.lock file instead of locking
+        # the first data file, so readers that lock individual data files
+        # don't conflict with the writer.
+        first_path = file_map[next(iter(all_keys))][0]
+        lock_path = os.path.join(os.path.dirname(first_path) or ".", ".save_state.lock")
+        with file_lock(lock_path):
             for key, (path, tmp_path) in temp_files.items():
                 try:
                     os.replace(tmp_path, path)
-                    with file_lock(path):
-                        pass  # Touch lock so readers see the update
                 except OSError:
                     # If replace fails, clean up remaining temp files
                     for _, (p, tp) in temp_files.items():
