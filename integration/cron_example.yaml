@@ -1,0 +1,35 @@
+# HMS v4 — Cron Configuration Example
+#
+# Usage: Copy to ~/.openclaw/cron/ directory or use OpenClaw cron commands
+#
+# v4 change: If HMS is loaded as an OpenClaw plugin, cron is optional.
+# The plugin's heartbeat hook handles routine tasks automatically.
+
+jobs:
+  - name: hms-process-pending
+    schedule: "* * * * *"
+    command: "python -m hms process_pending"
+    cwd: "/tmp/openclaw-HMS"
+    timeout: 60
+    env:
+      HMS_GATEWAY_URL: "${HMS_GATEWAY_URL}"
+      HMS_GATEWAY_TOKEN: "${HMS_GATEWAY_TOKEN}"
+      HMS_LLM_MODEL: "openclaw"
+
+  - name: hms-consolidate
+    schedule: "0 3 * * *"
+    command: "python -m hms consolidate"
+    cwd: "/tmp/openclaw-HMS"
+    timeout: 300
+    env:
+      HMS_GATEWAY_URL: "${HMS_GATEWAY_URL}"
+      HMS_GATEWAY_TOKEN: "${HMS_GATEWAY_TOKEN}"
+
+  - name: hms-forget
+    schedule: "0 4 * * 0"
+    command: "python -m hms forget"
+    cwd: "/tmp/openclaw-HMS"
+    timeout: 120
+    env:
+      HMS_GATEWAY_URL: "${HMS_GATEWAY_URL}"
+      HMS_GATEWAY_TOKEN: "${HMS_GATEWAY_TOKEN}"

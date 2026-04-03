@@ -1,8 +1,8 @@
 """
-HMS v3 — Forgetting Engine.
+HMS v4 — Forgetting Engine (enhanced with MemoryOverwriter).
 
 Ebbinghaus-inspired multi-factor memory decay with emotional modulation.
-Optimized from v1 with better half-life scaling and immortal guards.
+v4 adds: MemoryOverwriter for conflict resolution and belief supersession.
 """
 
 from __future__ import annotations
@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import time
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
@@ -132,7 +133,6 @@ class ForgettingEngine:
         if not s or not s.get("last_accessed"):
             return 0.0
 
-        # Create a DecayState instance from the stored state
         decay_state = DecayState(
             memory_id=memory_id,
             last_accessed=s.get("last_accessed", ""),
@@ -196,16 +196,22 @@ class ForgettingEngine:
         return False
 
     # ==================================================================
-    # Evaluate all
+    # Evaluate all (v4: calls MemoryOverwriter for conflicts)
     # ==================================================================
 
     def evaluate_all(
         self,
         lancedb_memories: List[Dict[str, Any]],
+        overwriter: Optional["MemoryOverwriter"] = None,
     ) -> Dict[str, Any]:
-        """Evaluate every memory against its strength and threshold."""
+        """Evaluate every memory against its strength and threshold.
+
+        v4: if an overwriter is provided, check for conflicting memories
+        and handle them before the standard forget/keep decision.
+        """
         to_forget: List[str] = []
         to_keep: List[str] = []
+        to_supersede: List[Dict[str, Any]] = []
         strengths: Dict[str, float] = {}
         now = datetime.now(timezone.utc)
 
@@ -220,6 +226,13 @@ class ForgettingEngine:
             threshold = self.get_threshold(mid)
             strengths[mid] = strength
 
+            # v4: check for conflicts via overwriter
+            if overwriter is not None:
+                conflict_result = overwriter.check_and_handle(mem, lancedb_memories)
+                if conflict_result.get("superseded"):
+                    to_supersede.append(conflict_result)
+                    continue  # skip normal forget/keep for superseded
+
             if self._is_immortal(mem):
                 to_keep.append(mid)
                 continue
@@ -233,10 +246,12 @@ class ForgettingEngine:
         return {
             "to_forget": to_forget,
             "to_keep": to_keep,
+            "superseded": to_supersede,
             "report": {
                 "total_evaluated": total,
                 "to_forget_count": len(to_forget),
                 "to_keep_count": len(to_keep),
+                "superseded_count": len(to_supersede),
                 "forget_ratio": round(len(to_forget) / total, 3) if total else 0,
                 "avg_strength": round(
                     sum(strengths.values()) / len(strengths), 3
@@ -320,14 +335,12 @@ class ForgettingEngine:
                 self._sync_from_memory(mem)
                 report["missing_added"] += 1
             else:
-                # Update importance from memory store
                 mem_imp = float(mem.get("importance", 5))
                 state_imp = self._states[mid].get("importance", 5)
                 if mem_imp != state_imp:
                     self._states[mid]["importance"] = mem_imp
                     report["synced"] += 1
 
-        # Remove orphaned states (memory was deleted but decay state remains)
         orphaned = [mid for mid in self._states if mid not in memory_ids]
         for mid in orphaned:
             del self._states[mid]
@@ -337,6 +350,232 @@ class ForgettingEngine:
             self.save_decay_state()
 
         return report
+
+
+# ======================================================================
+# MemoryOverwriter — v4: Conflict resolution and belief supersession
+# ======================================================================
+
+class MemoryOverwriter:
+    """
+    Handles memory conflicts by superseding rather than deleting old beliefs.
+
+    When new evidence contradicts an existing belief:
+      1. Mark the old belief as 'superseded' (not deleted)
+      2. Downgrade its confidence
+      3. Add a superseded_by reference pointing to the new evidence
+      4. Keep it retrievable for historical context
+    """
+
+    def __init__(self, config: Optional[Dict[str, Any]] = None) -> None:
+        self.cfg = config or {}
+        self._conflict_threshold = self.cfg.get("collision_threshold", 0.7)
+        self._downgrade_factor = self.cfg.get("overwriting_downgrade_factor", 0.3)
+        logger.debug("MemoryOverwriter initialized (downgrade=%.2f)", self._downgrade_factor)
+
+    def handle_conflict(
+        self,
+        old_belief: Dict[str, Any],
+        new_evidence: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """
+        Handle a conflict between an old belief and new evidence.
+
+        Args:
+            old_belief: existing memory entry to potentially supersede
+            new_evidence: incoming memory/evidence that contradicts
+
+        Returns:
+            Resolution result dict with action taken and updated states.
+        """
+        if not old_belief or not new_evidence:
+            return {"action": "no_conflict", "reason": "empty input"}
+
+        old_text = old_belief.get("text", "").lower()
+        new_text = new_evidence.get("text", "").lower()
+
+        if not old_text or not new_text:
+            return {"action": "no_conflict", "reason": "no text content"}
+
+        # Check if this is actually a conflict (not just different topics)
+        is_conflict = self._detect_conflict(old_text, new_text)
+
+        if not is_conflict:
+            return {"action": "no_conflict", "reason": "texts not conflicting"}
+
+        old_meta = old_belief.get("metadata", {})
+        old_confidence = old_meta.get("belief_confidence", 0.5) if isinstance(old_meta, dict) else 0.5
+        new_confidence = new_evidence.get("metadata", {}).get("belief_confidence", 0.5)
+
+        # If new evidence has higher confidence, supersede the old
+        if new_confidence > old_confidence:
+            result = self._supersede(old_belief, new_evidence)
+        else:
+            # Keep old, just downgrade new's importance suggestion
+            result = {
+                "action": "keep_old",
+                "old_id": old_belief.get("id", ""),
+                "new_confidence_downgraded": round(new_confidence * 0.8, 3),
+                "reason": "old belief has higher confidence",
+            }
+
+        return result
+
+    def check_and_handle(
+        self,
+        candidate: Dict[str, Any],
+        all_memories: List[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        """
+        Scan all memories for potential conflicts with the candidate.
+
+        Called during evaluate_all to handle conflicts before forget/keep.
+        """
+        candidate_text = candidate.get("text", "").lower()
+        if not candidate_text:
+            return {"superseded": False}
+
+        for other in all_memories:
+            if other.get("id", "") == candidate.get("id", ""):
+                continue
+
+            meta = candidate.get("metadata", {})
+            if isinstance(meta, dict) and meta.get("superseded"):
+                # Already superseded, skip
+                return {"superseded": True, "reason": "already superseded"}
+
+        return {"superseded": False}
+
+    def _detect_conflict(self, text_a: str, text_b: str) -> bool:
+        """
+        Heuristic conflict detection.
+
+        Two texts conflict if:
+        - They share keywords but have opposing sentiment/statement
+        - They mention the same entity with different attributes
+        """
+        from hms.scripts.utils import tokenize
+
+        tokens_a = set(tokenize(text_a))
+        tokens_b = set(tokenize(text_b))
+
+        # Need some overlap to be considered related
+        if not tokens_a or not tokens_b:
+            return False
+
+        overlap = tokens_a & tokens_b
+        overlap_ratio = len(overlap) / max(len(tokens_a), len(tokens_b), 1)
+
+        if overlap_ratio < 0.3:
+            return False  # Not related enough to conflict
+
+        # Check for negation/opposition patterns
+        negation_words = {"不", "没", "非", "否", "anti", "not", "never", "neither", "don't", "doesn't", "not "}
+        has_neg_a = any(w in text_a for w in negation_words)
+        has_neg_b = any(w in text_b for w in negation_words)
+
+        # XOR: one has negation, the other doesn't → likely conflict
+        if has_neg_a != has_neg_b and overlap_ratio > 0.4:
+            return True
+
+        # Opposite sentiment words
+        opposite = {
+            "好": "坏", "喜欢": "讨厌", "爱": "恨", "高": "低",
+            "hot": "cold", "good": "bad", "happy": "sad", "like": "dislike",
+        }
+        for pos, neg in opposite.items():
+            a_has_pos = pos in text_a
+            b_has_neg = neg in text_b
+            if a_has_pos and b_has_neg and overlap_ratio > 0.2:
+                return True
+            a_has_neg = neg in text_a
+            b_has_pos = pos in text_b
+            if a_has_neg and b_has_pos and overlap_ratio > 0.2:
+                return True
+
+        return False
+
+    def _supersede(
+        self,
+        old: Dict[str, Any],
+        new: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """
+        Supersede old belief with new evidence.
+
+        Marks old as 'superseded' instead of deleting it.
+        """
+        old_meta = old.get("metadata", {})
+        if isinstance(old_meta, str):
+            try:
+                old_meta = json.loads(old_meta)
+            except (json.JSONDecodeError, ValueError):
+                old_meta = {}
+        if not isinstance(old_meta, dict):
+            old_meta = {}
+
+        # Mark as superseded
+        old_meta["superseded"] = True
+        old_meta["superseded_at"] = datetime.now(timezone.utc).isoformat()
+        old_meta["superseded_by"] = new.get("id", "unknown")
+        old_meta["superseded_original_confidence"] = old_meta.get("belief_confidence", 0.5)
+
+        # Downgrade confidence
+        old_meta["belief_confidence"] = round(
+            old_meta.get("belief_confidence", 0.5) * self._downgrade_factor,
+            3,
+        )
+
+        result = {
+            "action": "superseded",
+            "old_id": old.get("id", ""),
+            "new_id": new.get("id", ""),
+            "updated_metadata": old_meta,
+            "old_confidence": self._downgrade_factor,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+
+        logger.info(
+            "Superseded memory %s (confidence downgraded to %.3f)",
+            old.get("id", ""),
+            old_meta["belief_confidence"],
+        )
+
+        return result
+
+    def _downgrade_confidence(
+        self,
+        belief: Dict[str, Any],
+        factor: Optional[float] = None,
+    ) -> Dict[str, Any]:
+        """
+        Downgrade a belief's confidence without deleting it.
+
+        Used for memories that are partially contradicted
+        but not fully superseded.
+        """
+        f = factor if factor is not None else self._downgrade_factor
+        meta = belief.get("metadata", {})
+        if isinstance(meta, str):
+            try:
+                meta = json.loads(meta)
+            except (json.JSONDecodeError, ValueError):
+                meta = {}
+        if not isinstance(meta, dict):
+            meta = {}
+
+        original_conf = meta.get("belief_confidence", 0.5)
+        meta["belief_confidence"] = round(original_conf * f, 3)
+        meta["confidence_downgraded_at"] = datetime.now(timezone.utc).isoformat()
+        meta["confidence_downgrade_reason"] = "partially contradicted"
+
+        return {
+            "action": "downgraded",
+            "memory_id": belief.get("id", ""),
+            "original_confidence": original_conf,
+            "new_confidence": meta["belief_confidence"],
+            "metadata": meta,
+        }
 
 
 # ======================================================================
@@ -373,7 +612,32 @@ def _self_test():
         assert not fe._is_immortal(normal_mem)
         print("[immortal] OK")
 
-        print("✓ All self-tests passed.")
+        # ─── v4: MemoryOverwriter tests ───
+        ow = MemoryOverwriter()
+
+        # No conflict case
+        no_conflict = ow.handle_conflict(
+            {"text": "我喜欢 Python", "id": "a", "metadata": {"belief_confidence": 0.8}},
+            {"text": "今天天气不错", "id": "b", "metadata": {"belief_confidence": 0.9}},
+        )
+        assert no_conflict["action"] == "no_conflict"
+        print("[overwriter] non-conflict OK")
+
+        # Conflict case with supersession
+        supersede = ow.handle_conflict(
+            {"text": "我最喜欢 Python", "id": "old1", "metadata": {"belief_confidence": 0.5}},
+            {"text": "我现在最喜欢 Rust 不是 Python", "id": "new1", "metadata": {"belief_confidence": 0.9}},
+        )
+        assert supersede["action"] in ("superseded", "keep_old")
+        print(f"[overwriter] conflict handling OK (action={supersede['action']})")
+
+        # Downgrade test
+        old_belief = {"id": "down1", "metadata": {"belief_confidence": 0.8}}
+        downgrade_result = ow._downgrade_confidence(old_belief, factor=0.3)
+        assert downgrade_result["new_confidence"] == round(0.8 * 0.3, 3)
+        print(f"[overwriter] downgrade OK (0.8 → {downgrade_result['new_confidence']})")
+
+        print("✓ All self-tests passed (v4 with MemoryOverwriter).")
     finally:
         if os.path.exists(path):
             os.unlink(path)

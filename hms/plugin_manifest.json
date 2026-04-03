@@ -1,0 +1,28 @@
+{
+  "name": "hms-memory",
+  "version": "4.0.0",
+  "description": "Hybrid Memory System — OpenClaw Native Plugin. Multi-tier context, reconstructive recall, dream consolidation, and creative association.",
+  "entry": "plugin.HMSPlugin",
+  "hooks": ["on_message", "on_heartbeat"],
+  "tools": [
+    "hms_perceive",
+    "hms_collide",
+    "hms_recall",
+    "hms_consolidate",
+    "hms_context_inject"
+  ],
+  "requires": {
+    "python": ">=3.10",
+    "openclaw": ">=2026.4.2"
+  },
+  "config_schema": {
+    "perception_mode": {"type": "string", "enum": ["lite", "full"], "default": "lite"},
+    "context_tier": {"type": "string", "enum": ["auto", "32k", "128k", "256k", "1m"], "default": "auto"},
+    "embedding_model": {"type": "string", "enum": ["local", "sentence-transformers"], "default": "local"},
+    "token_budget_daily": {"type": "number", "default": 50000},
+    "collision_threshold": {"type": "number", "default": 0.7},
+    "consolidate_interval": {"type": "string", "default": "0 3 * * *"},
+    "forget_interval": {"type": "string", "default": "0 4 * * 0"},
+    "gateway_url": {"type": "string", "default": "http://127.0.0.1:18789"}
+  }
+}

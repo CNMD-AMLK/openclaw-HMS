@@ -612,13 +612,12 @@ def _test_mm_forget():
 
 def _test_mm_tier():
     from hms.scripts.memory_manager import MemoryManager
-    import json
-    config_path = os.path.join(os.path.dirname(__file__), "..", "config.json")
-    with open(config_path) as f:
-        base_cfg = json.load(f)
+    from hms.scripts.config_loader import Config
+    # v4: context_tiers are in Config class defaults, not config.json
+    base_cfg = Config.get()
     for tier in ["32k", "128k", "256k", "1M"]:
         cfg = MemoryManager._apply_tier(dict(base_cfg), tier)
-        assert cfg.get("model_context_window", 0) > 0
+        assert cfg.get("model_context_window", 0) > 0, f"tier {tier} has no model_context_window"
 
 
 def _test_mocked_perceive():

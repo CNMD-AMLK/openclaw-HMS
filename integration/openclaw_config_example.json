@@ -1,0 +1,30 @@
+{
+  "_comment": "HMS v4 Plugin Integration — Example openclaw.json section",
+  "_doc": "Add this to your openclaw.json under the appropriate section",
+
+  "plugins": {
+    "entries": {
+      "hms-memory": {
+        "path": "/tmp/openclaw-HMS",
+        "config": {
+          "perception_mode": "lite",
+          "context_tier": "auto",
+          "embedding_model": "local",
+          "token_budget_daily": 50000,
+          "collision_threshold": 0.7,
+          "consolidate_interval": "0 3 * * *",
+          "forget_interval": "0 4 * * 0"
+        }
+      }
+    }
+  },
+
+  "memory": {
+    "hms": {
+      "enabled": true,
+      "plugin": "hms-memory",
+      "perception_mode": "lite",
+      "context_tier": "auto"
+    }
+  }
+}
