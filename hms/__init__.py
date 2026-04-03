@@ -1,4 +1,4 @@
-"""HMS v3.6.2 — Hierarchical Memory Scaffold.
+"""HMS — Hierarchical Memory Scaffold.
 
 Integration fixes for OpenClaw:
 - MemoryAdapter: native tool-first with Gateway HTTP fallback
@@ -7,4 +7,4 @@ Integration fixes for OpenClaw:
 - Security: no hardcoded secrets, env whitelist, token redaction
 - setup_wizard CLI for easy onboarding
 """
-__version__ = "3.6.2"
+

@@ -1,5 +1,5 @@
 """
-HMS v3.6.2 — Unified Memory Manager.
+HMS — Unified Memory Manager.
 
 Orchestrates the full cognitive memory pipeline:
   perception → collision → storage → consolidation → compression → fingerprint
@@ -320,7 +320,7 @@ class MemoryAdapter:
 
 class MemoryManager:
     """
-    Main HMS v3.6.2 orchestrator. Ties all modules together.
+    HMS orchestrator. Ties all modules together.
 
     Entry points:
       - on_message_received(): sync perception + context injection
