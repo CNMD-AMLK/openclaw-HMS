@@ -1,0 +1,9 @@
+{
+  "name": "openclaw-hms-memory",
+  "version": "5.0.0",
+  "private": true,
+  "description": "HMS v5 - Hierarchical Memory System with Embedding Vectors for OpenClaw",
+  "openclaw": {
+    "extensions": ["./index.ts"]
+  }
+}

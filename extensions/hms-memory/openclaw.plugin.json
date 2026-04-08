@@ -1,0 +1,26 @@
+{
+  "id": "hms-memory",
+  "name": "HMS 分层记忆系统",
+  "version": "5.0.0",
+  "description": "让 AI 拥有真正的记忆。分层记忆管理 + Embedding 向量语义检索（SQLite + Ollama qwen3-embedding）。",
+  "author": "CNMD-AMLK",
+  "main": "index.ts",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "enabled": { "type": "boolean", "default": true },
+      "dataDir": { "type": "string", "default": "~/.openclaw/extensions/hms-memory/data" },
+      "llmModel": { "type": "string", "default": "openclaw" },
+      "perceptionMode": { "type": "string", "enum": ["lite", "full"], "default": "lite" },
+      "contextTier": { "type": "string", "enum": ["auto", "32k", "128k", "256k", "1M"], "default": "auto" },
+      "autoInject": { "type": "boolean", "default": true },
+      "tokenBudgetDaily": { "type": "number", "default": 50000 },
+      "collisionThreshold": { "type": "number", "default": 0.7 },
+      "embeddingBackend": { "type": "string", "enum": ["ollama", "char-ngram"], "default": "ollama" },
+      "embeddingModel": { "type": "string", "default": "qwen3-embedding:0.6b" },
+      "ollamaBaseUrl": { "type": "string", "default": "http://127.0.0.1:11434", "description": "Ollama API base URL. Override with HMS_OLLAMA_BASE_URL env var." },
+      "enableHealthCheck": { "type": "boolean", "default": true }
+    }
+  }
+}
