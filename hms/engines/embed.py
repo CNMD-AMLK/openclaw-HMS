@@ -79,6 +79,8 @@ class EmbeddingCache:
         self._ollama_dim = 1024
 
         self._encoder_type = "char_ngram"
+        self._ollama_fail_until = 0.0  # Timestamp when Ollama can be retried
+        self._ollama_retry_interval = 60.0  # Seconds before retrying Ollama
 
         if _HAS_REQUESTS:
             base_url = self.cfg.get("embedding_ollama_base_url", "").rstrip("/")
@@ -166,19 +168,34 @@ class EmbeddingCache:
         return vec
 
     def _compute_embedding(self, text: str) -> List[float]:
-        if self._ollama_base_url and _HAS_REQUESTS:
-            try:
-                resp = requests.post(
-                    f"{self._ollama_base_url}/v1/embeddings",
-                    json={"model": self._ollama_model, "input": text},
-                    timeout=30,
-                )
-                resp.raise_for_status()
-                return resp.json()["data"][0]["embedding"]
-            except Exception as e:
-                logger.warning("Ollama embed failed: %s, using char-ngram", e)
-                self._ollama_base_url = None
-                self._encoder_type = "char_ngram"
+        import time as _time
+        # Try Ollama if configured, not in failure cooldown, and not permanently disabled
+        if self._ollama_base_url and _HAS_REQUESTS and self._encoder_type != "char_ngram":
+            if _time.time() > self._ollama_fail_until:
+                try:
+                    resp = requests.post(
+                        f"{self._ollama_base_url}/v1/embeddings",
+                        json={"model": self._ollama_model, "input": text},
+                        timeout=30,
+                    )
+                    resp.raise_for_status()
+                    return resp.json()["data"][0]["embedding"]
+                except Exception as e:
+                    logger.warning("Ollama embed failed: %s, falling back to char-ngram for %s seconds", e, self._ollama_retry_interval)
+                    self._ollama_fail_until = _time.time() + self._ollama_retry_interval
+                    self._encoder_type = "char_ngram"
+        # Also check if cooldown has expired and Ollama should be retried
+        if not self._ollama_base_url and _HAS_REQUESTS:
+            base_url = self.cfg.get("embedding_ollama_base_url", "").rstrip("/")
+            model = self.cfg.get("embedding_ollama_model", "qwen3-embedding:0.6b")
+            if base_url and model:
+                self._ollama_base_url = base_url
+                self._ollama_model = model
+                self._encoder_type = "ollama"
+                self._ollama_fail_until = 0.0
+        elif self._encoder_type == "char_ngram" and self._ollama_base_url and _time.time() > self._ollama_fail_until:
+            # Cooldown expired, re-enable Ollama for next attempt
+            self._encoder_type = "ollama"
         return self._char_encoder.encode(text)
 
     def _evict_old_entries(self) -> None:

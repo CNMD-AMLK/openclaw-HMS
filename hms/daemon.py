@@ -89,7 +89,7 @@ def rpc_recall(params):
         return {"error": "query is required"}
 
     from hms.engines.recall import ReconstructiveRecaller
-    recaller = ReconstructiveRecaller(_config or {})
+    recaller = ReconstructiveRecaller(_config or {}, adapter=mgr.adapter)
     perception = mgr.perception.analyze(query, "", force_heuristic=True)
     return recaller.recall(query, perception, top_k=params.get("top_k", 5))
 
