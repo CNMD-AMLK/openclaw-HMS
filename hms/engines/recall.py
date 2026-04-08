@@ -14,9 +14,10 @@ logger = logging.getLogger("hms.recall")
 
 
 class ReconstructiveRecaller:
-    def __init__(self, config: Dict[str, Any], *, llm: Optional[LLMAnalyzer] = None) -> None:
+    def __init__(self, config: Dict[str, Any], *, llm: Optional[LLMAnalyzer] = None, adapter=None) -> None:
         self.cfg = config
         self.llm = llm or LLMAnalyzer(config)
+        self.adapter = adapter
 
     def recall(self, query: str, perception: Dict[str, Any], top_k: int = 5) -> Dict[str, Any]:
         """
@@ -57,12 +58,12 @@ class ReconstructiveRecaller:
 
     def _search_fragments(self, query: str, top_k: int = 10) -> List[Dict[str, Any]]:
         """
-        Search for memory fragments relevant to query.
-        This is called from MemoryManager which has the adapter.
+        Search for memory fragments relevant to query using the storage adapter.
         """
-        # The actual search is done by the adapter passed from manager
-        # This method is a placeholder for the interface
-        return []
+        if self.adapter is None:
+            logger.warning("ReconstructiveRecaller has no adapter, returning empty")
+            return []
+        return self.adapter.recall(query=query, top_k=top_k)
 
 
 def simple_recall(adapter, query: str, top_k: int = 5) -> List[Dict[str, Any]]:

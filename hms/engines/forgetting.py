@@ -173,7 +173,11 @@ class ForgettingEngine:
 
     def _sync_from_memory(self, mem: Dict) -> None:
         mid = mem.get("id", "")
-        if not mid or mid in self._states:
+        if not mid:
+            return
+        if mid in self._states:
+            # Sync importance for existing entries (may have been updated by consolidation)
+            self._states[mid]["importance"] = float(mem.get("importance", 5))
             return
         meta = mem.get("metadata", {})
         if isinstance(meta, str):
