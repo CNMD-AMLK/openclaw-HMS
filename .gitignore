@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+.claw/
+data/
+*.sock
+*.db
+*.bin
+*.log
