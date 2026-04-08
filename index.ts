@@ -78,7 +78,7 @@ export default function register(api: any) {
       const result = await bridge.call("forget");
       return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
     },
-  });
+  }, { optional: true });
 
   api.registerTool({
     name: "hms_health",

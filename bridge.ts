@@ -142,8 +142,15 @@ export class HMSBridge {
 
   /** Send RPC request */
   async call(method: string, params: Record<string, any> = {}): Promise<any> {
+    // Re-check ready after start() completes — socket may have been set to null
+    // by a concurrent close event (Bug 3 fix: race condition)
     if (!this.socket || !this.ready) {
       await this.start();
+    }
+
+    // If still not ready after waiting, bail out
+    if (!this.socket || !this.ready) {
+      throw new Error(`HMS bridge not ready for ${method}`);
     }
 
     const id = this.nextId++;

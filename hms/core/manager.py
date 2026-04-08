@@ -103,7 +103,7 @@ class MemoryManager:
         except Exception:
             all_memories = []
         try:
-            self.consolidation.run(all_memories, report)
+            self.consolidation.run(all_memories, report, adapter=self.adapter)
         except Exception as e:
             report["errors"].append(f"consolidation: {e}")
         return report

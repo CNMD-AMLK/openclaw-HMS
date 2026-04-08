@@ -67,7 +67,7 @@ def _get_embedding(texts: List[str], config: Dict[str, Any]) -> List[List[float]
         return [_char_ngram_embedding(t, dim=dim) for t in texts]
 
 
-def _char_ngram_embedding(text: str, dim: int = 1024) -> List[float]:
+def _char_ngram_embedding(text: str, dim: int = 256) -> List[float]:
     """Pure-Python char n-gram embedding fallback (no external deps)."""
     import hashlib
     text = text.lower().strip()
@@ -122,6 +122,7 @@ class StorageAdapter:
         self._db_path = os.path.join(data_dir, "memories.db")
         self._lock = threading.Lock()
         self._embedding_dim = config.get("embedding_ollama_dim", 1024)
+        self._embed_cache = None  # lazily initialized for consistent embeddings
         self._init_db()
 
     def _init_db(self) -> None:
@@ -180,7 +181,14 @@ class StorageAdapter:
         If vector is not provided, it will be generated via Ollama.
         """
         if vector is None:
-            vector = _get_embedding([text], self.cfg)[0]
+            # Use EmbeddingCache for consistent embeddings (Bug 7 fix)
+            if self._embed_cache is None:
+                from hms.engines.embed import EmbeddingCache
+                self._embed_cache = EmbeddingCache({
+                    "cache_dir": self.cfg.get("cache_dir", self.cfg.get("dataDir", "data")),
+                    **self.cfg,
+                })
+            vector = self._embed_cache.embed(text)
 
         vector_json = json.dumps(vector)
 
@@ -249,7 +257,14 @@ class StorageAdapter:
                     conn.close()
 
         # Generate query embedding
-        query_vec = _get_embedding([query], self.cfg)[0]
+        # Use EmbeddingCache for consistent embeddings (Bug 7 fix)
+        if self._embed_cache is None:
+            from hms.engines.embed import EmbeddingCache
+            self._embed_cache = EmbeddingCache({
+                "cache_dir": self.cfg.get("cache_dir", self.cfg.get("dataDir", "data")),
+                **self.cfg,
+            })
+        query_vec = self._embed_cache.embed(query)
 
         with self._lock:
             conn = self._conn()
@@ -275,7 +290,7 @@ class StorageAdapter:
                 # If FTS returned nothing, fall back to all memories
                 if not rows:
                     rows = conn.execute(
-                        "SELECT * FROM memories LIMIT ?",
+                        "SELECT * FROM memories ORDER BY importance DESC, created_at DESC LIMIT ?",
                         (top_k * 3,),
                     ).fetchall()
 

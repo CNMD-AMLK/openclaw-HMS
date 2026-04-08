@@ -280,6 +280,114 @@ async def run_rpc_server(socket_path: str, data_dir: str):
         await server.serve_forever()
 
 
+def run_cli():
+    """Interactive CLI mode for debugging and manual memory operations."""
+    import shlex
+    mgr = get_manager()
+    print("HMS v5 CLI — type 'help' for commands, 'exit' to quit")
+    print(f"Data dir: {mgr.cfg.get('dataDir', 'unknown')}")
+    print()
+
+    def cmd_help():
+        print("Commands:")
+        print("  recall <query>          — recall memories")
+        print("  perceive <message>      — perceive a message")
+        print("  consolidate             — run consolidation")
+        print("  health [--detail]       — health check")
+        print("  forget                  — run forgetting engine")
+        print("  list [N]                — list N memories (default 10)")
+        print("  dump <id>               — dump single memory")
+        print("  exit / quit             — exit CLI")
+        print("  help                    — show this help")
+
+    def cmd_recall(query: str):
+        from hms.engines.recall import ReconstructiveRecaller
+        recaller = ReconstructiveRecaller(mgr.cfg)
+        perception = mgr.perception.analyze(query, "", force_heuristic=True)
+        result = recaller.recall(query, perception, top_k=5)
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+
+    def cmd_perceive(message: str):
+        result = mgr.on_message_received(message)
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+
+    def cmd_consolidate():
+        result = mgr.consolidate()
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+
+    def cmd_health(detail=False):
+        result = mgr.health_check() if detail else {"total_memories": mgr.adapter.health_check().get("total_memories", 0)}
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+
+    def cmd_forget():
+        from hms.engines.forgetting import ForgettingEngine, MemoryOverwriter
+        forgetting = ForgettingEngine(mgr.cfg)
+        overwriter = MemoryOverwriter(mgr.cfg)
+        memories = mgr.adapter.get_all_memories(limit=100) or []
+        evaluation = forgetting.evaluate_all(memories, overwriter)
+        print(json.dumps(evaluation, indent=2, ensure_ascii=False))
+
+    def cmd_list(n=10):
+        memories = mgr.adapter.get_all_memories(limit=n)
+        for mem in memories:
+            print(f"[{mem['id']}] imp={mem.get('importance', 0)} "
+                  f"cat={mem.get('category', '?')} "
+                  f"{mem.get('text', '')[:80]}")
+
+    def cmd_dump(mem_id):
+        rows = mgr.adapter.get_all_memories(limit=1000)
+        for mem in rows:
+            if str(mem["id"]) == mem_id:
+                print(json.dumps(dict(mem), indent=2, ensure_ascii=False))
+                return
+        print(f"Memory {mem_id} not found")
+
+    while True:
+        try:
+            line = input("hms> ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            break
+        if not line:
+            continue
+        parts = line.split(None, 1)
+        cmd, rest = parts[0].lower(), (parts[1] if len(parts) > 1 else "")
+        try:
+            if cmd in ("exit", "quit"):
+                break
+            elif cmd == "help":
+                cmd_help()
+            elif cmd == "recall":
+                if not rest:
+                    print("Usage: recall <query>")
+                else:
+                    cmd_recall(rest)
+            elif cmd == "perceive":
+                if not rest:
+                    print("Usage: perceive <message>")
+                else:
+                    cmd_perceive(rest)
+            elif cmd == "consolidate":
+                cmd_consolidate()
+            elif cmd == "health":
+                cmd_health(detail=(rest == "--detail"))
+            elif cmd == "forget":
+                cmd_forget()
+            elif cmd == "list":
+                n = int(rest) if rest.isdigit() else 10
+                cmd_list(n)
+            elif cmd == "dump":
+                if not rest:
+                    print("Usage: dump <id>")
+                else:
+                    cmd_dump(rest)
+            else:
+                print(f"Unknown command: {cmd}. Type 'help' for commands.")
+        except Exception as e:
+            print(f"Error: {e}")
+    print("Goodbye!")
+
+
 def main():
     parser = argparse.ArgumentParser(description="HMS Daemon v5")
     parser.add_argument("--mode", default="rpc", choices=["rpc", "cli"])
@@ -291,6 +399,11 @@ def main():
         os.environ["HMS_DATA_DIR"] = args.data_dir
 
     config = load_config()
+
+    if args.mode == "cli":
+        run_cli()
+        return
+
     socket_path = args.socket or os.path.join(config["dataDir"], "hms.sock")
 
     loop = asyncio.new_event_loop()

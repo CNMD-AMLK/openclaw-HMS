@@ -38,10 +38,10 @@ After=network.target
 Type=simple
 User=$(whoami)
 WorkingDirectory=$PLUGIN_DIR
-Environment=HMS_CONFIG={"dataDir":"$DATA_DIR","ollamaBaseUrl":"${OLLAMA_BASE_URL:-http://127.0.0.1:11434}"}
+Environment=HMS_CONFIG={"dataDir":"\"$DATA_DIR\"","ollamaBaseUrl":"${OLLAMA_BASE_URL:-http://127.0.0.1:11434}"}
 Environment=HMS_OLLAMA_BASE_URL="${OLLAMA_BASE_URL:-http://127.0.0.1:11434}"
 Environment=PYTHONUNBUFFERED=1
-ExecStart=$PYTHON -u -m hms.daemon --mode rpc --socket $SOCK_PATH --data-dir $DATA_DIR
+ExecStart=$PYTHON -u -m hms.daemon --mode rpc --socket $SOCK_PATH --data-dir "$DATA_DIR"
 Restart=on-failure
 RestartSec=3
 TimeoutStopSec=10

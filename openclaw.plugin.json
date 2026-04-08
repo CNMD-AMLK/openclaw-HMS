@@ -1,7 +1,7 @@
 {
   "id": "hms-memory",
   "name": "HMS 分层记忆系统",
-  "version": "5.0.0",
+  "version": "5.0.2",
   "description": "让 AI 拥有真正的记忆。分层记忆管理 + Embedding 向量语义检索（SQLite + Ollama qwen3-embedding）。",
   "author": "CNMD-AMLK",
   "main": "index.ts",

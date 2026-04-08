@@ -31,27 +31,38 @@ class ConsolidationEngine:
     def set_embed_cache(self, cache: Any) -> None:
         self._embed_cache = cache
 
-    def run(self, memories: List[Dict[str, Any]], report: Dict[str, Any]) -> None:
-        """Run consolidation on memories: compress similar ones, update fingerprints."""
+    def run(self, memories: List[Dict[str, Any]], report: Dict[str, Any],
+             adapter=None) -> None:
+        """Run consolidation on memories: compress similar ones, update fingerprints.
+        
+        Args:
+            memories: in-memory list of memory dicts (modified in-place)
+            report: dict to accumulate results
+            adapter: StorageAdapter instance for persistence (required for fixes)
+        """
         if not memories:
             return
 
         # 1. Compress similar memories (simple embedding-based deduplication)
         try:
-            compressed = self._compress_memories(memories)
+            compressed = self._compress_memories(memories, adapter)
             report["compressed"] = compressed
         except Exception as e:
             report["errors"].append(f"compression: {e}")
 
         # 2. Update importance based on recency and access
         try:
-            updated = self._update_importance(memories)
+            updated = self._update_importance(memories, adapter)
             report["updated"] = updated
         except Exception as e:
             report["errors"].append(f"importance_update: {e}")
 
-    def _compress_memories(self, memories: List[Dict]) -> int:
-        """Merge highly similar memories using embedding similarity."""
+    def _compress_memories(self, memories: List[Dict], adapter=None) -> int:
+        """Merge highly similar memories using embedding similarity.
+        
+        Deleted memories are persisted via adapter.forget().
+        Merged importance is persisted via adapter.update().
+        """
         if not self._embed_cache or len(memories) < 2:
             return 0
 
@@ -67,6 +78,23 @@ class ConsolidationEngine:
                     new_imp = max(mem_a.get("importance", 5), memories[j].get("importance", 5))
                     mem_a["importance"] = new_imp
                     mem_a["access_count"] = max(mem_a.get("access_count", 0), memories[j].get("access_count", 0))
+                    
+                    # Persist merged importance to DB
+                    mem_a_id = str(mem_a.get("id", ""))
+                    if adapter and mem_a_id:
+                        try:
+                            adapter.update(mem_a_id, importance=new_imp)
+                        except Exception:
+                            pass
+                    
+                    # Persist deletion of merged memory to DB
+                    mem_b_id = str(memories[j].get("id", ""))
+                    if adapter and mem_b_id:
+                        try:
+                            adapter.forget(mem_b_id)
+                        except Exception:
+                            pass
+                    
                     memories.pop(j)
                     compressed += 1
                 else:
@@ -74,8 +102,11 @@ class ConsolidationEngine:
             i += 1
         return compressed
 
-    def _update_importance(self, memories: List[Dict]) -> int:
-        """Boost importance of frequently accessed memories."""
+    def _update_importance(self, memories: List[Dict], adapter=None) -> int:
+        """Boost importance of frequently accessed memories.
+        
+        Updated importance is persisted via adapter.update().
+        """
         updated = 0
         now = datetime.now(timezone.utc)
         for mem in memories:
@@ -86,5 +117,12 @@ class ConsolidationEngine:
                 new_imp = min(int(current_imp + boost), 10)
                 if new_imp != current_imp:
                     mem["importance"] = new_imp
+                    # Persist to DB
+                    mem_id = str(mem.get("id", ""))
+                    if adapter and mem_id:
+                        try:
+                            adapter.update(mem_id, importance=new_imp)
+                        except Exception:
+                            pass
                     updated += 1
         return updated
